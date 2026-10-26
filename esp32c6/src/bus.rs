@@ -605,9 +605,13 @@ impl Bus for SocBus {
             _ => { self.last_fault = Some((addr, true)); Err(Fault::Prohibited) }
         }
     }
+    /// Every instruction comes through here: inlined into the step, and one word read when the
+    /// whole window is in the buffer. The bytes past a buffer's end still read as zero.
+    #[inline(always)]
     fn fetch(&mut self, pc: u32) -> Result<[u8; 4], Fault> {
         match self.resolve(pc) {
             Some((b, o, _)) if o < b.len() => {
+                if let Some(w) = b.get(o..o + 4) { return Ok([w[0], w[1], w[2], w[3]]); }
                 let mut r = [0u8; 4];
                 for i in 0..4 { if o + i < b.len() { r[i] = b[o + i]; } }
                 Ok(r)
@@ -845,5 +849,37 @@ mod parlio_dma_tests {
             assert_eq!(bus.periph.gdma.gdma.out[0].int_raw & 4, 4, "case {case}");
             assert!(!bus.periph.gdma.gdma.out[0].running);
         }
+    }
+}
+
+#[cfg(test)]
+mod fetch_tests {
+    use super::*;
+    use emu_core::Bus;
+
+    /// The four-byte window, whole or cut short by the end of SRAM, ROM or a mapped flash page.
+    #[test]
+    fn fetch_reads_the_window_and_zero_fills_past_the_buffer() {
+        let mut b = SocBus::new(0x1_0003, [0; 6]);
+        b.sram[0x100..0x106].copy_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(b.fetch(SRAM_LOW + 0x100), Ok([1, 2, 3, 4]));
+        assert_eq!(b.fetch(SRAM_LOW + 0x102), Ok([3, 4, 5, 6]));
+        let n = b.sram.len();
+        b.sram[n - 3..].copy_from_slice(&[7, 8, 9]);
+        assert_eq!(b.fetch(SRAM_HIGH - 4), Ok([0, 7, 8, 9]));
+        assert_eq!(b.fetch(SRAM_HIGH - 3), Ok([7, 8, 9, 0]));
+        assert_eq!(b.fetch(SRAM_HIGH - 2), Ok([8, 9, 0, 0]));
+        b.rom[..4].copy_from_slice(&[0x13, 0, 0, 0]);
+        assert_eq!(b.fetch(ROM_LOW), Ok([0x13, 0, 0, 0]));
+        let r = b.rom.len();
+        b.rom[r - 1] = 0x82;
+        assert_eq!(b.fetch(ROM_HIGH - 1), Ok([0x82, 0, 0, 0]));
+        // flash page 1 holds only three bytes of this flash
+        b.flash[0x1_0000..].copy_from_slice(&[0xa1, 0xb2, 0xc3]);
+        b.mmu[0] = MMU_VALID | 1;
+        assert_eq!(b.fetch(FLASH_LOW), Ok([0xa1, 0xb2, 0xc3, 0]));
+        assert_eq!(b.fetch(FLASH_LOW + 2), Ok([0xc3, 0, 0, 0]));
+        assert_eq!(b.fetch(FLASH_LOW + 3), Err(Fault::Unmapped));
+        assert_eq!(b.last_fault, Some((FLASH_LOW + 3, false)));
     }
 }
