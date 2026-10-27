@@ -320,6 +320,15 @@ fn run_cooja(o: &mut Opts) {
 
 fn set_camera_image(board: &mut esp_soc::Board, path: Option<&str>) {
     if let Some(p) = path {
+        // Baseline JPEG goes to the sensor verbatim; it is never decoded.
+        if let Some(data) = std::fs::read(p).ok().filter(|d| d.starts_with(&[0xff, 0xd8])) {
+            let jpeg = esp_soc::picture::Jpeg::parse(data).and_then(|jpeg| {
+                let (w, h, n) = (jpeg.w, jpeg.h, jpeg.bytes.len());
+                board.set_camera_jpeg(jpeg).map(|()| eprintln!("[emu] camera JPEG {p} ({w}x{h}, {n} bytes)"))
+            });
+            if let Err(e) = jpeg { eprintln!("[emu] {p}: {e}"); std::process::exit(2); }
+            return;
+        }
         match esp_soc::picture::load(p) {
             Ok(pic) => {
                 eprintln!("[emu] camera picture {} ({}x{})", p, pic.w, pic.h);

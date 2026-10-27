@@ -80,12 +80,21 @@ receive work. See EX229 for checks and limits.
 ## The camera: `--board ai-thinker-cam`
 
 The AI-Thinker ESP32-CAM (alias `esp32cam`) models OV2640 SCCB configuration,
-physical GPIO routing and I2S0 RX DMA into internal DRAM. Supply a BMP/PPM still
-with `--cam-image`; absent input produces black frames. Supported sensor output
-is raw RGB565 or YUV422 (grayscale requests use the YUV wire format), at a fixed
-approximate 10 FPS. Either I2C controller routed to GPIO26/27 reaches the one
-sensor. JPEG+PSRAM CameraWebServer is unsupported; unsupported output
-prints one `[camera] unsupported sensor output` notice per board instance.
+physical GPIO routing and I2S0 RX DMA. Supply a BMP/PPM still with `--cam-image`;
+absent input produces black frames. Supported raw sensor output is RGB565 or
+YUV422 (grayscale requests use the YUV wire format), at a fixed approximate 10 FPS.
+Either I2C controller routed to GPIO26/27 reaches the one sensor.
+
+`PIXFORMAT_JPEG` takes host-encoded input: `--cam-image photo.jpg` (or loader
+kind 7 in the browser) with a baseline JPEG whose SOF0 size equals the sensor's
+configured output size (640 × 480 for `FRAMESIZE_VGA`). Its bytes reach
+`fb->buf` unchanged and `fb->len` is the file length; the model never encodes,
+decodes or scales. A malformed, non-baseline or wrongly sized JPEG is refused
+when supplied and the previous input stays. After `set_framesize` the host must
+supply a JPEG of the new size; until then JPEG mode delivers no frame and prints
+one `[camera] JPEG output … has no host JPEG of that size` notice. Frame buffers
+may be in internal DRAM or, with `--psram-mb 4`, in PSRAM. Other output prints one
+`[camera] unsupported sensor output` notice per board instance.
 There is no adjustable FPS, JPEG encoding, ISP fidelity or per-PCLK timing claim.
 Losing a route mid-frame raises IN_DSCR_ERR as a conservative model policy to
 prevent splicing partial frames, not as a measured hardware fault mapping.
@@ -107,6 +116,9 @@ The [build recipe](../examples/classic-camera/README.md) pins IDF and the camera
 driver. Its guest fixture uses 10 MHz XCLK / FIFO mode 1. FIFO mode 3 (normally
 selected at 20 MHz by Arduino) has exact-vector unit coverage only, not a
 20 MHz compiled-driver fixture. See [EX232](experiments.md#ex232) and its receipt.
+The JPEG fixture (20 MHz XCLK, quality 12, VGA then QVGA, DRAM and PSRAM
+framebuffers) is [EX256](experiments.md#ex256) with its
+[recipe](../examples/classic-camera/jpeg.md).
 
 ## The board: `--board ttgo-tdisplay`
 

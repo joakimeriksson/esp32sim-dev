@@ -2,7 +2,7 @@
 use emu_core::Bus;
 use esp32::bus::SocBus;
 use esp_periph::i2c::{INT_NACK, INT_TIMEOUT};
-use esp_soc::picture::Picture;
+use esp_soc::picture::{Jpeg, JpegError, Picture};
 use std::sync::Arc;
 
 fn put(bus: &mut SocBus, addr: u32, value: u32) { bus.write32(addr, value).unwrap(); }
@@ -69,13 +69,22 @@ fn clock(bus: &mut SocBus) {
     bus.periph.tick(64);
 }
 fn picture(rgb: [u8; 3]) -> Picture { Picture { w: 1, h: 1, rgb: rgb.to_vec() } }
+/// Structurally valid baseline JPEG (SOI, SOF0, SOS, entropy byte, EOI); never decoded.
+fn jpeg(w: u16, h: u16, tag: u8) -> Vec<u8> {
+    let mut d = vec![0xff, 0xd8, 0xff, 0xc0, 0, 11, 8];
+    d.extend(h.to_be_bytes()); d.extend(w.to_be_bytes());
+    d.extend([1, 1, 0x11, 0, 0xff, 0xda, 0, 8, 1, 1, 0, 0, 63, 0, tag, 0xff, 0xd9]);
+    d
+}
+fn set_jpeg(bus: &mut SocBus, bytes: &[u8]) -> Result<(), JpegError> { bus.board.set_camera_jpeg(Jpeg::parse(bytes.to_vec()).unwrap()) }
 
 #[test]
 fn unsupported_sensor_output_warns_once() {
     const CHILD: &str = "ESP32SIM_CAMERA_WARNING_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let mut bus = board(); configure(&mut bus); clock(&mut bus);
-        for mode in [0x10, 0x10, 8, 0x10, 0x18] {
+        // RAW10 and JPEG+RGB565 are unsupported; JPEG without host input is no frame.
+        for mode in [0x18, 0x04, 8, 0x18, 0x10, 0x12, 0x10, 0x05] {
             write(&mut bus, 0xda, mode);
             assert_eq!(bus.camera_frame().is_some(), mode == 8);
         }
@@ -87,7 +96,8 @@ fn unsupported_sensor_output_warns_once() {
     assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert_eq!(stderr.matches("[camera] unsupported sensor output").count(), 1, "{stderr}");
-    assert!(stderr.contains("raw RGB565/YUV422 in DRAM, not JPEG/PSRAM CameraWebServer"), "{stderr}");
+    assert!(stderr.contains("IMAGE_MODE 0x18; classic ESP32-CAM supports raw RGB565/YUV422 and host-encoded JPEG"), "{stderr}");
+    assert_eq!(stderr.matches("[camera] JPEG output 4x4 has no host JPEG of that size").count(), 1, "{stderr}");
 }
 
 #[test]
@@ -164,6 +174,49 @@ fn aithinker_host_and_register_updates_invalidate_shared_cache() {
     assert!(bus.camera_frame().is_none(), "JPEG is not fabricated as raw bytes");
     write(&mut bus, 0xda, 8);
     assert_eq!(*bus.camera_frame().unwrap().2, [7, 224].repeat(32));
+}
+#[test]
+fn aithinker_jpeg_output_is_host_jpeg_verbatim_at_configured_size() {
+    let mut bus = board(); configure(&mut bus); clock(&mut bus);
+    bus.board.set_camera_picture(picture([255, 0, 0])).unwrap();
+    let a = jpeg(4, 4, 1);
+    assert_eq!(set_jpeg(&mut bus, &a), Ok(()));
+    assert!(!bus.board.camera_frame_is_jpeg());
+    assert_eq!(*bus.camera_frame().unwrap().2, [248, 0].repeat(16), "raw output ignores host JPEG");
+    // ov2640_settings_jpeg3: IMAGE_MODE_JPEG_EN | IMAGE_MODE_HREF_VSYNC.
+    for mode in [0x12, 0x10] {
+        write(&mut bus, 0xda, mode);
+        assert!(bus.board.camera_frame_is_jpeg());
+        let (w, h, frame) = bus.camera_frame().unwrap();
+        assert_eq!((w, h, &*frame), (4, 4, &a));
+    }
+    let first = bus.camera_frame().unwrap().2;
+    assert_eq!(set_jpeg(&mut bus, &jpeg(8, 4, 2)), Err(JpegError::SizeMismatch { jpeg: (8, 4), sensor: (4, 4) }));
+    assert!(Arc::ptr_eq(&first, &bus.camera_frame().unwrap().2), "refusal keeps the previous JPEG");
+    let b = jpeg(4, 4, 3);
+    assert_eq!(set_jpeg(&mut bus, &b), Ok(()));
+    assert_eq!(*bus.camera_frame().unwrap().2, b);
+    // A new geometry needs a matching JPEG; nothing is scaled or fabricated.
+    write(&mut bus, 0x5a, 2);
+    assert!(bus.camera_frame().is_none());
+    assert_eq!(set_jpeg(&mut bus, &b), Err(JpegError::SizeMismatch { jpeg: (4, 4), sensor: (8, 4) }));
+    let c = jpeg(8, 4, 4);
+    assert_eq!(set_jpeg(&mut bus, &c), Ok(()));
+    assert_eq!(*bus.camera_frame().unwrap().2, c);
+    write(&mut bus, 0xda, 8);
+    assert!(!bus.board.camera_frame_is_jpeg());
+    assert_eq!(*bus.camera_frame().unwrap().2, [248, 0].repeat(32));
+}
+#[test]
+fn aithinker_unconfigured_sensor_accepts_jpeg_checked_at_delivery() {
+    for (size, delivered) in [((4, 4), true), ((8, 4), false), ((4, 8), false)] {
+        let mut bus = board(); clock(&mut bus);
+        let bytes = jpeg(size.0, size.1, 5);
+        assert_eq!(set_jpeg(&mut bus, &bytes), Ok(()), "no configured size yet");
+        configure(&mut bus);
+        write(&mut bus, 0xda, 0x12);
+        assert_eq!(bus.camera_frame().map(|f| (f.0, f.1, f.2.to_vec())), delivered.then_some((4, 4, bytes)));
+    }
 }
 #[test]
 fn aithinker_grayscale_requests_keep_yuv_wire_bytes() {
