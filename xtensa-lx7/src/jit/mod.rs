@@ -409,6 +409,29 @@ mod native {
                 Mulsh => { g.ld_ar(9, s); g.ld_ar(10, t); g.a.smull(11, 9, 10); g.a.asr_imm_x(11, 11, 32); g.st_ar(r, 11); }
                 Mul16u => { g.ld_ar(9, s); g.ld_ar(10, t); g.a.uxth(9, 9); g.a.uxth(10, 10); g.a.mul(11, 9, 10); g.st_ar(r, 11); }
                 Mul16s => { g.ld_ar(9, s); g.ld_ar(10, t); g.a.sxth(9, 9); g.a.sxth(10, 10); g.a.mul(11, 9, 10); g.st_ar(r, 11); }
+                // A zero divisor takes the interpreter, which raises IntegerDivideByZero as the
+                // fallback below would. sdiv gives i32::MIN / -1 = i32::MIN and msub then 0,
+                // what wrapping_div / wrapping_rem give.
+                Quou | Quos | Remu | Rems => {
+                    let slow = g.a.label();
+                    g.ld_ar(9, s); g.ld_ar(10, t);
+                    g.a.cbz(10, slow);
+                    if matches!(i.op, Quou | Remu) { g.a.udiv(11, 9, 10); } else { g.a.sdiv(11, 9, 10); }
+                    if matches!(i.op, Remu | Rems) { g.a.msub(11, 11, 10, 9); }
+                    g.st_ar(r, 11);
+                    let (tr, el, insn) = (g.exit_trap, g.exit_left, (&raw const *block_insn) as u64);
+                    g.stubs.push(Box::new(move |a: &mut Asm| {
+                        a.bind(slow);
+                        a.mov_x(0, CPU); a.mov_x(1, BUS);
+                        // mov64 by hand: a second call site would move it out of line
+                        a.movz_x(2, (insn & 0xffff) as u32, 0);
+                        for sh in [16u32, 32, 48] { let part = ((insn >> sh) & 0xffff) as u32; if part != 0 { a.movk_x(2, part, sh); } }
+                        a.mov32(3, pc);
+                        a.ldr_x(9, HELP, H_EXEC); a.blr(9);
+                        a.tbnz(0, 0, tr);
+                        a.b(el);                                // cpu.pc is the interpreter's
+                    }));
+                }
                 Salt | Saltu => { g.ld_ar(9, s); g.ld_ar(10, t); g.a.cmp(9, 10); g.a.cset(11, if i.op == Salt { Cond::Lt } else { Cond::Lo }); g.st_ar(r, 11); }
 
                 // ---- loads and stores through the bus helpers
