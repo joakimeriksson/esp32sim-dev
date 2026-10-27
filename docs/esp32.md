@@ -83,7 +83,8 @@ The AI-Thinker ESP32-CAM (alias `esp32cam`) models OV2640 SCCB configuration,
 physical GPIO routing and I2S0 RX DMA into internal DRAM. Supply a BMP/PPM still
 with `--cam-image`; absent input produces black frames. Supported sensor output
 is raw RGB565 or YUV422 (grayscale requests use the YUV wire format), at a fixed
-approximate 10 FPS. JPEG+PSRAM CameraWebServer is unsupported; unsupported output
+approximate 10 FPS. Either I2C controller routed to GPIO26/27 reaches the one
+sensor. JPEG+PSRAM CameraWebServer is unsupported; unsupported output
 prints one `[camera] unsupported sensor output` notice per board instance.
 There is no adjustable FPS, JPEG encoding, ISP fidelity or per-PCLK timing claim.
 Losing a route mid-frame raises IN_DSCR_ERR as a conservative model policy to

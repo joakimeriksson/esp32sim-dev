@@ -1,7 +1,7 @@
 //! Board-only qualification. No I2S, DMA or guest capture claim.
 use emu_core::Bus;
 use esp32::bus::SocBus;
-use esp_periph::i2c::INT_NACK;
+use esp_periph::i2c::{INT_NACK, INT_TIMEOUT};
 use esp_soc::picture::Picture;
 use std::sync::Arc;
 
@@ -17,17 +17,22 @@ fn board() -> SocBus {
     route(&mut bus, 26, 27);
     bus
 }
-fn route(bus: &mut SocBus, sda: u8, scl: u8) {
-    // IDF v5.5.4 gpio_sig_map.h I2CEXT0 29/30; io_mux_reg.h pad offsets.
-    for (pin, signal) in [(sda, 30), (scl, 29)] {
+fn route(bus: &mut SocBus, sda: u8, scl: u8) { route_on(bus, 0, sda, scl) }
+fn route_on(bus: &mut SocBus, port: usize, sda: u8, scl: u8) {
+    // IDF v5.5.4 gpio_sig_map.h I2CEXT0 SCL/SDA 29/30, I2CEXT1 95/96;
+    // io_mux_reg.h pad offsets.
+    let (scl_signal, sda_signal) = [(29, 30), (95, 96)][port];
+    for (pin, signal) in [(sda, sda_signal), (scl, scl_signal)] {
         let mux = match pin { 26 => 0x28, 27 => 0x2c, _ => unreachable!() };
         put(bus, 0x3ff4_9000 + mux, (2 << 12) | (1 << 9) | (1 << 8));
         put(bus, 0x3ff4_4130 + 4 * signal, (1 << 7) | u32::from(pin));
         put(bus, 0x3ff4_4530 + 4 * u32::from(pin), signal);
     }
 }
-fn transfer(bus: &mut SocBus, bytes: &[u8], read: bool) -> (u32, u8) {
-    let base = 0x3ff5_3000;
+fn transfer(bus: &mut SocBus, bytes: &[u8], read: bool) -> (u32, u8) { transfer_on(bus, 0, bytes, read) }
+fn transfer_on(bus: &mut SocBus, port: usize, bytes: &[u8], read: bool) -> (u32, u8) {
+    // IDF v5.5.4 reg_base.h: DR_REG_I2C_EXT_BASE 0x3ff53000, DR_REG_I2C1_EXT_BASE 0x3ff67000.
+    let base = [0x3ff5_3000, 0x3ff6_7000][port];
     put(bus, base + 0x24, u32::MAX);
     put(bus, base + 0x18, 3 << 12);
     put(bus, base + 0x1c, if read { 0x61 } else { 0x60 });
@@ -91,8 +96,8 @@ fn aithinker_selection_and_only_sensor_attachment() {
         let mut board = esp32::board::make_board(alias).unwrap();
         assert_eq!(board.name(), "ai-thinker-cam");
         let devices = board.i2c_devices();
-        assert_eq!(devices.len(), 1);
-        assert_eq!((devices[0].0, devices[0].1, devices[0].2.pins()), (0, 0x30, Some((26, 27))));
+        let attached: Vec<_> = devices.iter().map(|(port, address, device)| (*port, *address, device.pins())).collect();
+        assert_eq!(attached, [(0, 0x30, Some((26, 27))), (1, 0x30, Some((26, 27)))]);
     }
     assert_eq!(esp32::board::aithinker::PIN_RESET, None);
     assert!(esp32::board::make_board("waveshare-cam").is_none());
@@ -112,6 +117,32 @@ fn aithinker_sccb_requires_both_physical_wires() {
     assert_ne!(transfer(&mut bus, &[0x0a], false).0 & INT_NACK, 0);
     route(&mut bus, 26, 27);
     assert_eq!(read(&mut bus, 0x0a), 0x26);
+}
+#[test]
+fn aithinker_sccb_is_one_sensor_on_either_controller() {
+    // esp32-camera takes the controller from sccb_i2c_port; the sensor is on
+    // the wires, so I2C1 routed to GPIO26/27 reaches the same registers.
+    let read_on = |bus: &mut SocBus, port, reg| {
+        assert_eq!(transfer_on(bus, port, &[reg], false).0 & INT_NACK, 0);
+        let (status, byte) = transfer_on(bus, port, &[], true);
+        assert_eq!(status & INT_NACK, 0);
+        byte
+    };
+    let mut bus = board();
+    // I2C1 not routed (its SDA/SCL inputs are not high): it times out.
+    assert_ne!(transfer_on(&mut bus, 1, &[0x0a], false).0 & INT_TIMEOUT, 0);
+    route_on(&mut bus, 1, 26, 27);
+    assert_eq!(transfer_on(&mut bus, 1, &[0xff, 1], false).0 & INT_NACK, 0);
+    assert_eq!(read_on(&mut bus, 1, 0x0a), 0x26);
+    // The bank selected and a register written through I2C1 are what I2C0 sees.
+    assert_eq!(transfer_on(&mut bus, 1, &[0xff, 0], false).0 & INT_NACK, 0);
+    assert_eq!(transfer_on(&mut bus, 1, &[0xda, 0x10], false).0 & INT_NACK, 0);
+    route(&mut bus, 26, 27);
+    assert_eq!(read_on(&mut bus, 0, 0xda), 0x10);
+    // A powered-down sensor answers neither controller.
+    put(&mut bus, 0x3ff4_4014, 1); // OUT1_W1TS: PWDN high
+    route_on(&mut bus, 1, 26, 27);
+    assert_ne!(transfer_on(&mut bus, 1, &[0x0a], false).0 & INT_NACK, 0);
 }
 #[test]
 fn aithinker_host_and_register_updates_invalidate_shared_cache() {

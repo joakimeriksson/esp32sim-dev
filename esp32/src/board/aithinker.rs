@@ -34,15 +34,17 @@ pub struct AiThinkerCam {
 }
 impl Default for AiThinkerCam { fn default() -> Self { Self { sensor: Default::default(), source: Default::default(), powered_down: Arc::new(Mutex::new(true)), now: 0, next: None, vsync: false, edges: Vec::new(), frame_start: None, unsupported_reported: false } } }
 
-struct Sccb { sensor: Ov2640, powered_down: Arc<Mutex<bool>> }
+struct Sccb { sensor: Arc<Mutex<Ov2640>>, powered_down: Arc<Mutex<bool>> }
 // Power is shared with the SCCB device so a powered-down sensor does not ACK.
 // The board's output callbacks maintain this independently of frame requests.
+// One sensor sits on GPIO26/27: either I2C controller routed there reaches the
+// same registers (esp32-camera takes the controller from sccb_i2c_port).
 impl I2cDevice for Sccb {
     fn pins(&self) -> Option<(u8, u8)> { Some((26, 27)) }
-    fn start(&mut self, read: bool) -> bool { !*self.powered_down.lock().unwrap() && self.sensor.start(read) }
-    fn write(&mut self, byte: u8) -> bool { self.sensor.write(byte) }
-    fn read(&mut self) -> u8 { self.sensor.read() }
-    fn stop(&mut self) { self.sensor.stop(); }
+    fn start(&mut self, read: bool) -> bool { !*self.powered_down.lock().unwrap() && self.sensor.lock().unwrap().start(read) }
+    fn write(&mut self, byte: u8) -> bool { self.sensor.lock().unwrap().write(byte) }
+    fn read(&mut self) -> u8 { self.sensor.lock().unwrap().read() }
+    fn stop(&mut self) { self.sensor.lock().unwrap().stop(); }
 }
 
 impl BoardModel for AiThinkerCam {
@@ -88,7 +90,8 @@ impl BoardModel for AiThinkerCam {
         *self.powered_down.lock().unwrap() = enabled & (1 << PIN_PWDN) == 0 || output & (1 << PIN_PWDN) != 0;
     }
     fn i2c_devices(&mut self) -> Vec<(u8, u8, Box<dyn I2cDevice>)> {
-        vec![(0, 0x30, Box::new(Sccb { sensor: Ov2640::new(self.sensor.clone()), powered_down: self.powered_down.clone() }))]
+        let sensor = Arc::new(Mutex::new(Ov2640::new(self.sensor.clone())));
+        (0..2).map(|port| (port, 0x30, Box::new(Sccb { sensor: sensor.clone(), powered_down: self.powered_down.clone() }) as Box<dyn I2cDevice>)).collect()
     }
     fn set_camera_picture(&mut self, p: Picture) -> Result<(), &'static str> { self.source.set_camera_picture(p) }
     fn camera_preview(&self, w: u32, h: u32) -> Option<Vec<u8>> { self.source.camera_preview(w, h) }
