@@ -48,7 +48,7 @@
   "__RNvXs_NtCs4H4Cwc3c3A5_7esp32c63busNtB4_6SocBusNtNtCsbyIkX9Ozj27_8emu_core3bus3Bus4tick": {
    "class": "code",
    "base_insns": 2158,
-   "cand_insns": 2169
+   "cand_insns": 2170
   },
   "__RNvXs_NtCs4H4Cwc3c3A5_7esp32c63socNtNtB6_3bus6SocBusNtNtCs9YEi0b6xRah_7esp_soc3soc6SocBus6report": {
    "class": "code",
@@ -110,7 +110,7 @@
   "__RNvXs_NtCs4H4Cwc3c3A5_7esp32c63busNtB4_6SocBusNtNtCsbyIkX9Ozj27_8emu_core3bus3Bus4tick": {
    "class": "code",
    "base_insns": 2158,
-   "cand_insns": 2169
+   "cand_insns": 2170
   },
   "__RNvXs_NtCs4H4Cwc3c3A5_7esp32c63socNtNtB6_3bus6SocBusNtNtCs9YEi0b6xRah_7esp_soc3soc6SocBus6report": {
    "class": "code",
@@ -172,7 +172,7 @@
   "__RNvXs_NtCs4H4Cwc3c3A5_7esp32c63busNtB4_6SocBusNtNtCsbyIkX9Ozj27_8emu_core3bus3Bus4tick": {
    "class": "code",
    "base_insns": 2158,
-   "cand_insns": 2169
+   "cand_insns": 2170
   },
   "__RNvXs_NtCs4H4Cwc3c3A5_7esp32c63socNtNtB6_3bus6SocBusNtNtCs9YEi0b6xRah_7esp_soc3soc6SocBus6report": {
    "class": "code",
@@ -234,7 +234,7 @@
   "__RNvXs_NtCs4H4Cwc3c3A5_7esp32c63busNtB4_6SocBusNtNtCsbyIkX9Ozj27_8emu_core3bus3Bus4tick": {
    "class": "code",
    "base_insns": 2158,
-   "cand_insns": 2169
+   "cand_insns": 2170
   },
   "__RNvXs_NtCs4H4Cwc3c3A5_7esp32c63socNtNtB6_3bus6SocBusNtNtCs9YEi0b6xRah_7esp_soc3soc6SocBus6report": {
    "class": "code",

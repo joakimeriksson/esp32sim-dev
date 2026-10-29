@@ -8,7 +8,7 @@ from pathlib import Path
 tree, out = Path(sys.argv[1]), Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)
 T = [(['-p', 'esp32c6', '--lib'], 'esp32c6-lib'), (['-p', 'esp32c6', '--tests'], 'esp32c6-tests')]
 L = 'esp32c6/src/radio.rs'
-GATE = '        if !self.live { return; }\n'
+GATE = '        if !self.live && self.ed_left.is_none() { return; }\n'
 WR = '    fn write(&mut self, off: u32, v: u32) -> WriteEffect {\n        self.live = true;\n'
 RX = ' started_ago: Option<u64>) -> bool {\n        self.live = true;\n'
 TX = '    pub fn tx_loaded(&mut self, psdu: Vec<u8>) {\n        self.live = true;\n'
@@ -20,6 +20,7 @@ cases = [
  ('control-unmutated', GATE, GATE),
  ('gate-removed', GATE, ''),
  ('gate-inverted', GATE, GATE.replace('!self.live', 'self.live')),
+ ('public-ed-ignored', GATE, '        if !self.live { return; }\n'),
  ('write-sets-no-live', WR, WR.replace('        self.live = true;\n', '')),
  ('receive-sets-no-live', RX, RX.replace('        self.live = true;\n', '')),
  ('tx-loaded-sets-no-live', TX, TX.replace('        self.live = true;\n', '')),
