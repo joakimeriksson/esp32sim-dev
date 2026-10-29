@@ -576,8 +576,8 @@ impl Device for Ieee802154 {
     fn tick(&mut self, cycles: u64) {
         self.scene_acc += cycles;
         while self.scene_acc >= CPU_HZ / 10 { self.scene_acc -= CPU_HZ / 10; self.scene_step(); }
-        // with nothing armed, every step below is a no-op
-        if !self.live { return; }
+        // ed_left is public and may be armed directly without setting live.
+        if !self.live && self.ed_left.is_none() { return; }
         if let Some(left) = self.ed_left {
             if cycles >= left { self.ed_left = None; self.ed_rss = self.sample(); self.scans += 1; self.events |= EVENT_ED_DONE; if self.state == RadioState::Ed { self.state = RadioState::Idle; } } else { self.ed_left = Some(left - cycles); }
         }
