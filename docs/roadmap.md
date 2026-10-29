@@ -9,14 +9,18 @@ Ordered by value; each item links to its plan where one exists.
    for real LAN presence.
 2. **Testing** — hermetic CPU/SoC/board suites, conformance firmware, CI tiers
    ([testing-plan.md](testing-plan.md)). Milestone 1 (no silent skips, shared CPU harness,
-   parser robustness) first.
-3. **Firmware upload from the browser** — drop a `firmware.bin` on the page → written to
-   flash at 0x10000 → `Machine::reboot()`. Pieces exist; ~an hour.
+   parser robustness) first. CI runs the goldens on x86 and on AArch64 with the native JIT, and
+   the CLI and every test find the ROMs the same way (`esp_soc::rom`).
+3. **Firmware upload from the browser** — done: the page's firmware dialog boots your own
+   bootloader, partition table and app (plus ELF symbols and an action script) on any chip,
+   without a reload. Left: dropping a new `app.bin` onto a running board.
 4. **Interpreter speed** — see [speed-plan.md](speed-plan.md). The block interpreter and an
    AArch64 JIT are in (SID player 93 → 193 Minsn/s, 2.1× real time; Atech 210; every output
    bit-identical with `--no-jit`). The inline TLB for loads/stores and the wasm backend for the
    browser build are in too. Left inside the JIT: register caching, inlined call/entry/retw; then
-   NEON for the PIE lanes. `tools/bench.py` is the yardstick.
+   NEON for the PIE lanes. `tools/bench.py` is the yardstick. The RISC-V chips (C3, C6, P4)
+   still fetch and decode every instruction: a decode cache, then a block cache, is their next
+   step, behind the same page-version checks the LX7 caches use.
 5. **ESP32-C3 (RISC-V)** — a draft is in ([esp32c3.md](esp32c3.md)): RV32IMC decoder verified
    against objdump, the C3 memory map and interrupt matrix, and unmodified IDF firmware booting
    from the mask ROM through the bootloader into FreeRTOS and `app_main` — verified against a
@@ -49,5 +53,14 @@ Ordered by value; each item links to its plan where one exists.
    F, CLIC, L2MEM/PSRAM, SDMMC, USB-OTG and Wi-Fi from an
    emulated C6 over ESP-Hosted (`--coproc`) are there; Xesppie, MIPI-DSI and DMA2D/PPA for the
    display boards it ships on are not.
+13. **One model per IP block** — chips were added by copying their nearest sibling, and the
+   copies drift. Done: the AES DMA of the C3 and C6 through the shared GDMA walker, one GDMA
+   adapter for the C3/C6 layouts, the reboot survivors of the classic ESP32 and S3 brought in
+   line, the RMT capture bounded (#326); one WiFi MAC model for the S3 and C3, with the EX238
+   receive hand-over on both (#327). Left: the classic and C6 MACs on that model (both still
+   lack the hand-over); before the next chip, a board/chip registry instead of hand-kept lists,
+   default `SocBus` methods, reboot survivors and register reset values declared by each device,
+   and one interrupt-routing block; one crate that builds machines for the CLI and the browser
+   (groundwork for several boards in lock-step); usage errors instead of panics in the CLI.
 
 Not planned: blob-level WiFi/BLE emulation, cache-timing accuracy, Wokwi/cloud integration.
