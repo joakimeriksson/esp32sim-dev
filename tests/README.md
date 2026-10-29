@@ -46,7 +46,10 @@ audio sample is a failure, not noise (see `docs/decisions.md`, "Performance").
 
 They need the mask ROM ELFs, which ship with ESP-IDF (`~/.espressif/tools/esp-rom-elfs/`) or
 can be pointed at with `ESP32SIM_ROM_DIR`, so they are `#[ignore]`d by default and never skip
-silently: without a ROM they fail with the path they looked for. Without ESP-IDF,
+silently: without a ROM they fail naming the file and both places. Every test and the CLI find
+them the same way (`esp_soc::rom`: `ESP32SIM_ROM_DIR` first, then the newest ESP-IDF copy); three
+external tests still take the older names their evidence receipts use (`ADC_ROM_DIR`, `HOOKS_ROM`,
+`CLASSIC_I2C_ROM`) ahead of that. Without ESP-IDF,
 `tools/fetch-demo-assets.sh --no-linux` fetches them into `web/wasm/fw/`, where `tools/wasm-test.mjs`
 finds them by itself; for the cargo tests set `ESP32SIM_ROM_DIR=web/wasm/fw`.
 

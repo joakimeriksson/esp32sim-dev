@@ -23,6 +23,7 @@ pub mod observers;
 pub mod picture;
 pub mod pins;
 pub mod png;
+pub mod rom;
 pub mod soc;
 pub mod uart;
 pub mod usb_host;
