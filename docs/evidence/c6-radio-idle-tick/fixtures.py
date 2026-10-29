@@ -1,4 +1,4 @@
-"""C3/C6/P4 fixture command lines shared by the EX252 scripts. ESP32SIM_TREE: the checkout whose
+"""C3/C6/P4 fixture command lines shared by the EX259 scripts. ESP32SIM_TREE: the checkout whose
 web/wasm/fw holds the fetched assets (default: current directory); C6_STARTER: a directory with
 the public display starter's four images and manifest.json (offsets and SHA-256, inputs.json);
 FIXTURES: space-separated fixture names (default: the four C6 ones)."""

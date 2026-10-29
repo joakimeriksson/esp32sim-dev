@@ -54,13 +54,13 @@
    "esp32sim-p4": "7ac26cbae4d8023129b3e6fda63471cb80454e929e44494dad628826afae5f1b"
   },
   "cand": {
-   "esp32sim": "4cdcffe753af0600cab519846eb290b4aec2e4d4f8ea2eccfdb4c512a039b639",
-   "esp32sim-c3": "64ef2c750f1fdd4f0877a2ee2769fecd9ec2a968f7d8d804faff9d0b36cd03cb",
-   "esp32sim-c6": "62fd38d5a0b97d7fb09f24a1d75fdf555a04b14aa1d7c2f2708437aa1ee0e13b",
-   "esp32sim-p4": "b6e5cfdc7b2aacee31c3991201c2a480783ce83540fbfc676396ebfee78ee3bc"
+   "esp32sim": "5acd068cbb41c2f05350ee1023b6af9d345fd3cbe421dcfb9b2a9fe59bdff38e",
+   "esp32sim-c3": "e44305e5efa70a5ba46ccb1b2cddcea6f9368ff776b865a3cd538cb10205b0f7",
+   "esp32sim-c6": "5791bbaa15cae8642960f10953d8675b42a376aac2764d915be7c67e955ff80e",
+   "esp32sim-p4": "92a69ef117a9958f7a350201aca8a3d4342a5a406feb5977b66c78a4a958bac3"
   }
  },
  "build": "cargo +1.99.0 build --release --bins",
  "base_commit": "2e36224d",
- "candidate_code_commit": "c03dcd9e"
+ "candidate_code_commit": "69e441e65efb96c8c42df9dabb8870107cc5e670"
 }
