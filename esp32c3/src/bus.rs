@@ -274,42 +274,35 @@ impl SocBus {
         true
     }
 
+    /// AES through GDMA (peripheral 6): the OUT chain is the input, the cipher is the shared
+    /// model's, the result goes into the IN chain, all in the round that set the trigger. Both
+    /// chains are read through the shared walker (`gather_out`, `GdmaInCh::receive`), so
+    /// CHECK_OWNER and the descriptor budget apply as for SHA and SPI2; the OUT data comes from
+    /// data SRAM, the IN data never lands on MMIO. Each channel stops after the transaction.
+    /// A malformed OUT chain ends the input where it is and raises OUT_DSCR_ERR (no
+    /// OUT_TOTAL_EOF); a malformed or short IN chain keeps what fits and raises IN_DSCR_ERR
+    /// (with IN_DSCR_EMPTY when it ran out). The AES block reports done either way, as before.
     fn aes_dma_step(&mut self) {
         let (out_ch, in_ch) = { let g = &self.periph.gdma.state; (g.out_channel_for(6), g.in_channel_for(6)) };
         if let (Some(out_ch), Some(in_ch)) = (out_ch, in_ch) {
             self.periph.aes.dma_pending = false;
             let mut input = Vec::new();
-            let (mut desc, mut last) = (self.periph.gdma.state.out[out_ch].desc, 0);
-            for _ in 0..4096 {
-                if desc == 0 { break; }
-                let d = esp_periph::read_desc(&|a| self.sram32(a), desc);
-                let Some(bytes) = self.sram_bytes(d.buf, d.length as usize) else { break };
-                input.extend_from_slice(bytes);
-                last = desc;
-                if d.eof { break; }
-                desc = d.next;
-            }
+            let mut memory = esp_periph::gdma::SramOut { base: DRAM_LOW, bytes: &mut self.sram[DRAM_IN_SRAM..], channel: &mut self.periph.gdma.state.out[out_ch] };
+            let result = esp_periph::gdma::gather_out(&mut memory, usize::MAX, &mut input);
             let c = &mut self.periph.gdma.state.out[out_ch];
-            c.running = false; c.desc = 0; c.eof_desc = last;
-            c.int_raw |= (1 << 0) | (1 << 1) | (1 << 3);                 // OUT_DONE, OUT_EOF, OUT_TOTAL_EOF
+            c.running = false; c.buf_pos = 0;
+            match result {
+                Ok(next) => { c.desc = next; c.int_raw |= 1 << 3; }       // OUT_TOTAL_EOF
+                Err(_) => c.int_raw |= 1 << 2,                          // OUT_DSCR_ERR
+            }
 
             let output = self.periph.aes.transform_blocks(&input);
-            let (mut desc, mut pos, mut last) = (self.periph.gdma.state.inp[in_ch].desc, 0usize, 0);
-            for _ in 0..4096 {
-                if desc == 0 || pos >= output.len() { break; }
-                let d = esp_periph::read_desc(&|a| self.sram32(a), desc);
-                let n = (d.size as usize).min(output.len() - pos);
-                if n == 0 || !self.sram_store(d.buf, &output[pos..pos + n]) { break; }
-                pos += n;
-                let eof = pos == output.len();
-                let dw0 = (self.sram32(desc) & !(0xfff << 12) & !(3 << 30)) | (n as u32) << 12 | if eof { 1 << 30 } else { 0 };
-                self.sram_store(desc, &dw0.to_le_bytes());
-                last = desc;
-                desc = d.next;
+            let mut channel = self.periph.gdma.state.inp[in_ch];
+            let mut irq_changed = false;
+            if channel.receive(self, &output, Some(output.len() as u32), false, Self::is_periph, &mut irq_changed) {
+                channel.running = false; channel.desc = 0;
             }
-            let c = &mut self.periph.gdma.state.inp[in_ch];
-            c.running = false; c.desc = 0; c.eof_desc = last;
-            c.int_raw |= (1 << 0) | (1 << 1);                            // IN_DONE, IN_SUC_EOF
+            self.periph.gdma.state.inp[in_ch] = channel;
         }
         if self.periph.aes.dma_pending { return; }
         self.periph.aes.state = 2;                                       // DONE
