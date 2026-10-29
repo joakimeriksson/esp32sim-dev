@@ -21,6 +21,9 @@ def dis(b, s):
         ins = re.sub(r';.*$', '', ins).strip()
         m = re.match(r'adrp\s+(\w+),', ins)
         if m: paged.add(m.group(1)); norm.append(f'adrp {m.group(1)}, PAGE'); continue
+        # An omitted immediate on a page-based load/store is the zero page offset.
+        z = re.match(r'(?:ldr\w*|str\w*)\s+\w+,\s*\[(\w+)\]$', ins)
+        if z and z.group(1) in paged: ins = ins[:-1] + ', #0]'
         # data placement: the page offset applied to an adrp'd register is layout, not code
         m = re.match(r'(add|ldr\w*|str\w*)\s+(\w+),\s*(?:\[)?(\w+),\s*#(0x[0-9a-f]+|\d+)', ins)
         if m and m.group(3) in paged: ins = re.sub(r'#(0x[0-9a-f]+|\d+)', '#PAGEOFF', ins, count=1)

@@ -857,7 +857,7 @@ mod fetch_tests {
     use super::*;
     use emu_core::Bus;
 
-    /// The four-byte window, whole or cut short by the end of SRAM, ROM or a mapped flash page.
+    /// The four-byte window, whole or cut short by the end of a backing buffer.
     #[test]
     fn fetch_reads_the_window_and_zero_fills_past_the_buffer() {
         let mut b = SocBus::new(0x1_0003, [0; 6]);
@@ -874,7 +874,10 @@ mod fetch_tests {
         let r = b.rom.len();
         b.rom[r - 1] = 0x82;
         assert_eq!(b.fetch(ROM_HIGH - 1), Ok([0x82, 0, 0, 0]));
-        // flash page 1 holds only three bytes of this flash
+        let l = b.lp_sram.len();
+        b.lp_sram[l - 2..].copy_from_slice(&[0x42, 0x73]);
+        assert_eq!(b.fetch(LP_SRAM_HIGH - 2), Ok([0x42, 0x73, 0, 0]));
+        // The flash image ends three bytes into physical page 1.
         b.flash[0x1_0000..].copy_from_slice(&[0xa1, 0xb2, 0xc3]);
         b.mmu[0] = MMU_VALID | 1;
         assert_eq!(b.fetch(FLASH_LOW), Ok([0xa1, 0xb2, 0xc3, 0]));

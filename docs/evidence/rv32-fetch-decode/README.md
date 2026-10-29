@@ -2,20 +2,22 @@
 
 Base: main `ddf753a5`. Toolchain 1.99.0, release profile unchanged. ARM64 macOS host.
 
+The branch was rebased onto `66eb9704` with code range-diff `=`.
+
 ## What
 
 The C3/C6/P4 core is a plain interpreter. On the C6, every executed instruction called `SocBus::fetch` (out of line, four bounds-checked byte loads merged into the result) and then `decode32` or `decode_compressed` (out of line, the `Insn` returned through the stack). On a 5 s `sample` of c6-energy-scan on base these three were the top-of-stack for 48.9% of main-thread samples (`decode_compressed` 21.8%, `fetch` 15.7%, `decode32` 10.9%; local profile, not committed).
 
 Two changes, no new state:
 
-1. C6 `Bus::fetch` is `#[inline(always)]`, and a window that lies entirely inside its buffer is read as one 4-byte slice. A window cut short by the end of SRAM, ROM, LP SRAM or a mapped flash page takes the old byte loop, so the bytes past the end still read as zero. Resolution through the MMU is unchanged.
+1. C6 `Bus::fetch` is `#[inline(always)]`, and a window that lies entirely inside its buffer is read as one 4-byte slice. A window cut short by the end of SRAM, ROM, LP SRAM or the flash image takes the old byte loop, so the bytes past the end still read as zero. A window crossing a mapped flash page within the image reads the following physical bytes through the same resolution as before; MMU resolution is unchanged.
 2. `decode32` and `decode_compressed` are `#[inline(always)]` into `decode_for`. This is the shared RV32 crate, so the C3 and P4 steps get the inlined decoders too (their fetch is unchanged).
 
 The decoders, their results and the order of every bus access are unchanged.
 
 ## Exact work
 
-`exact.py <out> 10 <base-probe> <candidate-probe>` with the local post-run retired-count report (`probe.py`, not committed), 10 guest seconds, ROM boot. Identical: retired instructions, scheduler work, interrupt totals and per-line sources, stderr (wall time removed) and console SHA-256 ([exact-work.json](exact-work.json)).
+`exact.py <out> 10 <base-probe> <candidate-probe>` with the local post-run retired-count report (the edit applied by `probe.py` is not committed), 10 guest seconds, ROM boot. Identical: retired instructions, scheduler work, interrupt totals and per-line sources, stderr (wall time removed) and console SHA-256 ([exact-work.json](exact-work.json)).
 
 | Fixture | Retired | Interrupts | Console SHA-256 |
 | --- | ---: | ---: | --- |
@@ -30,7 +32,7 @@ C3 and P4 rows compare the unprobed release binaries (scheduler work, interrupts
 
 ## Hot-path disassembly
 
-`codegen.py <base-bins> <candidate-bins> codegen.json` over the four release binaries (esp32sim, -c3, -c6, -p4), 75 selected symbols each, normalized for addresses, data page offsets and import stubs ([codegen.json](codegen.json)). 69/75 identical in every binary. The six differences are the intended ones: the three RV32 `step_outcome` instantiations grow (C6 905 → 1832, C3 905 → 1721, P4 930 → 1753 instructions) and `decode32`, `decode_compressed` and the C6 `fetch` no longer exist as separate functions. Classic and S3 run loops, `step_blocks`, every bus tick, deadline and device function are byte-identical.
+`codegen.py <base-bins> <candidate-bins> codegen.json` compares main `2e36224d` with the rebased change over four release binaries (esp32sim, -c3, -c6, -p4), 79 selected symbols each, normalized for addresses, data page offsets and import stubs ([codegen.json](codegen.json)). 73/79 are identical in every binary. The six differences are the intended ones: the three RV32 `step_outcome` instantiations grow (C6 915 → 1854, C3 915 → 1731, P4 946 → 1771 instructions) and `decode32`, `decode_compressed` and the C6 `fetch` no longer exist as separate functions. Classic and S3 run loops, `step_blocks`, every bus tick, deadline and device function are identical after normalization. `python3 test_codegen.py` checks zero page offsets.
 
 ## Mutations
 
