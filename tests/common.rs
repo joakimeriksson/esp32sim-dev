@@ -1,4 +1,4 @@
-//! Shared by the golden-output tests in `cli/tests` and `cli-c3/tests` (included with `#[path]`).
+//! Shared by the firmware tests in `cli/tests`, `esp32c6/tests` and `wasm/tests` (included with `#[path]`).
 //! No dependencies beyond the workspace's own crates: a small SHA-256 stands in for a crate.
 #![allow(dead_code)]
 use std::path::{Path, PathBuf};
