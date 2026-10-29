@@ -22,6 +22,10 @@ pub fn symbol_bit(sym: u32) -> bool {
 
 // ------------------------------------------------------------------ RMT (TX channels 0-3) — enough for WS2812 via the legacy driver
 pub const RMT_MEM_WORDS: usize = 48;
+/// Most WS2812 bits one transmission captures (2730 LEDs). A wrap-mode or DMA stream with no
+/// end marker never completes, so without a bound the guest grows host memory without limit;
+/// bits past the bound are dropped and the frame is delivered truncated.
+pub const MAX_FRAME_BITS: usize = 1 << 16;
 #[derive(Clone, Default)]
 pub struct RmtTxCh {
     pub conf0: u32, pub tx_lim: u32, pub carrier: u32,
@@ -156,7 +160,7 @@ impl Rmt {
                 c.end_pending = true;
                 continue;
             }
-            c.bits.push(ws2812_bit!(d0, l0, d1, l1));
+            if c.bits.len() < MAX_FRAME_BITS { c.bits.push(ws2812_bit!(d0, l0, d1, l1)); }
             c.acc_cycles -= (d0 + d1) * cycles_per_tick;
             c.rd += 1;
             c.since_thr += 1;
@@ -280,5 +284,14 @@ mod dma_tests {
         r.write(0x2c, 0);
         assert_eq!(r.dma_fifo_len(), 0);
         assert!(r.dma_fifo.is_none());
+    }
+    #[test]
+    fn wrap_mode_without_end_marker_keeps_capture_bounded() {
+        let mut r = Rmt::new(160_000_000);
+        for w in 0..RMT_MEM_WORDS as u32 { r.write(0x800 + w * 4, 0x8000 | 1 | (1 << 16)); }   // 1-tick high, 1-tick low, never an end marker
+        r.write(0x20, (1 << 16) | (1 << 8) | (1 << 4) | 1);   // one block, divider 1, MEM_TX_WRAP_EN, TX_START
+        for _ in 0..100 { r.tick(1 << 20); }
+        assert!(r.ch[0].running, "wrap mode with no end marker transmits forever");
+        assert_eq!(r.ch[0].bits.len(), MAX_FRAME_BITS);
     }
 }
