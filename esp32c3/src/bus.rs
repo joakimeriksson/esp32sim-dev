@@ -110,8 +110,8 @@ impl SocBus {
     #[inline(never)]
     fn sha_dma_write(&mut self, a: u32) {
         if !matches!(a & !0xfff, 0x6003_b000 | 0x6003_f000) { return; }
-        if let Some(ch) = self.periph.gdma.state.out_channel_for(7) {
-            let mut memory = esp_periph::gdma::SramOut { base: DRAM_LOW, bytes: &mut self.sram[DRAM_IN_SRAM..], channel: &mut self.periph.gdma.state.out[ch] };
+        if let Some(ch) = self.periph.gdma.gdma.out_channel_for(7) {
+            let mut memory = esp_periph::gdma::SramOut { base: DRAM_LOW, bytes: &mut self.sram[DRAM_IN_SRAM..], channel: &mut self.periph.gdma.gdma.out[ch] };
             self.periph.sha.dma_step(&mut memory);
         }
     }
@@ -167,12 +167,12 @@ impl SocBus {
     #[inline(never)]
     fn spi2_dma_step(&mut self) {
         let Some(bits) = self.periph.spi2.dma_tx_pending else { return };
-        let Some(ch) = self.periph.gdma.state.out_channel_for(0) else { return };
+        let Some(ch) = self.periph.gdma.gdma.out_channel_for(0) else { return };
         let wanted = bits.div_ceil(8) as usize;
         let mut payload = Vec::with_capacity(wanted);
-        let mut memory = esp_periph::gdma::SramOut { base: DRAM_LOW, bytes: &mut self.sram[DRAM_IN_SRAM..], channel: &mut self.periph.gdma.state.out[ch] };
+        let mut memory = esp_periph::gdma::SramOut { base: DRAM_LOW, bytes: &mut self.sram[DRAM_IN_SRAM..], channel: &mut self.periph.gdma.gdma.out[ch] };
         let result = esp_periph::gdma::gather_out(&mut memory, wanted, &mut payload);
-        let c = &mut self.periph.gdma.state.out[ch];
+        let c = &mut self.periph.gdma.gdma.out[ch];
         c.running = false; c.buf_pos = 0;
         let complete = match result {
             Ok(next) => { c.desc = next; if next == 0 { c.int_raw |= 1 << 3; } payload.len() == wanted }
@@ -283,13 +283,13 @@ impl SocBus {
     /// OUT_TOTAL_EOF); a malformed or short IN chain keeps what fits and raises IN_DSCR_ERR
     /// (with IN_DSCR_EMPTY when it ran out). The AES block reports done either way, as before.
     fn aes_dma_step(&mut self) {
-        let (out_ch, in_ch) = { let g = &self.periph.gdma.state; (g.out_channel_for(6), g.in_channel_for(6)) };
+        let (out_ch, in_ch) = { let g = &self.periph.gdma.gdma; (g.out_channel_for(6), g.in_channel_for(6)) };
         if let (Some(out_ch), Some(in_ch)) = (out_ch, in_ch) {
             self.periph.aes.dma_pending = false;
             let mut input = Vec::new();
-            let mut memory = esp_periph::gdma::SramOut { base: DRAM_LOW, bytes: &mut self.sram[DRAM_IN_SRAM..], channel: &mut self.periph.gdma.state.out[out_ch] };
+            let mut memory = esp_periph::gdma::SramOut { base: DRAM_LOW, bytes: &mut self.sram[DRAM_IN_SRAM..], channel: &mut self.periph.gdma.gdma.out[out_ch] };
             let result = esp_periph::gdma::gather_out(&mut memory, usize::MAX, &mut input);
-            let c = &mut self.periph.gdma.state.out[out_ch];
+            let c = &mut self.periph.gdma.gdma.out[out_ch];
             c.running = false; c.buf_pos = 0;
             match result {
                 Ok(next) => { c.desc = next; c.int_raw |= 1 << 3; }       // OUT_TOTAL_EOF
@@ -297,12 +297,12 @@ impl SocBus {
             }
 
             let output = self.periph.aes.transform_blocks(&input);
-            let mut channel = self.periph.gdma.state.inp[in_ch];
+            let mut channel = self.periph.gdma.gdma.inp[in_ch];
             let mut irq_changed = false;
             if channel.receive(self, &output, Some(output.len() as u32), false, Self::is_periph, &mut irq_changed) {
                 channel.running = false; channel.desc = 0;
             }
-            self.periph.gdma.state.inp[in_ch] = channel;
+            self.periph.gdma.gdma.inp[in_ch] = channel;
         }
         if self.periph.aes.dma_pending { return; }
         self.periph.aes.state = 2;                                       // DONE
@@ -381,15 +381,15 @@ impl SocBus {
 
     // ESP-IDF v5.5.5 components/soc/esp32c3/include/soc/gdma_channel.h:13, I2S0 trigger 3.
     fn i2s_rx_step(&mut self, cycles: u64) {
-        let Some(ch) = self.periph.gdma.state.in_channel_for(3) else { return };
+        let Some(ch) = self.periph.gdma.gdma.in_channel_for(3) else { return };
         let bytes = self.i2s_receive(cycles);
         let eof = self.periph.i2s0.read(0x64);
-        let mut channel = self.periph.gdma.state.inp[ch];
+        let mut channel = self.periph.gdma.gdma.inp[ch];
         let mut irq_changed = false;
         let _ = channel.receive(self, &bytes, Some(eof), false, Self::is_periph, &mut irq_changed);
         self.periph.i2s0.recycle_rx_buffer(bytes);
         self.irq_dirty |= irq_changed;
-        self.periph.gdma.state.inp[ch] = channel;
+        self.periph.gdma.gdma.inp[ch] = channel;
     }
 
     /// PCM for one RX interval: pin-routed sources when a bank is attached, else controller input.

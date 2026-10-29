@@ -452,7 +452,7 @@ impl SocBus {
     #[inline(never)]
     fn parlio_dma_write(&mut self, a: u32) {
         if a >> 12 == 0x60080 {
-            let Some(off) = crate::periph::GdmaC6::map(a & 0xfff) else { return };
+            let Some(off) = crate::periph::GdmaC6::map_c6(a & 0xfff) else { return };
             let channel = (off / esp_periph::GDMA_CH_STRIDE) as usize;
             if !self.periph.gdma.gdma.out.get(channel).is_some_and(|c| c.running && c.peri_sel == 9) { return; }
         }
