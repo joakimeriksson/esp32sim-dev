@@ -23,7 +23,7 @@ class NormalizeTest(unittest.TestCase):
     def setUpClass(cls):
         # Empty binary directories exercise no external commands at module load.
         import tempfile
-        cls.tmp = tempfile.TemporaryDirectory(dir=HERE)
+        cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
         (root / 'base').mkdir(); (root / 'cand').mkdir()
         with patch.object(sys, 'argv', ['codegen.py', str(root / 'base'), str(root / 'cand'), str(root / 'out.json')]), contextlib.redirect_stdout(io.StringIO()):
