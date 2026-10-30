@@ -423,9 +423,7 @@ mod native {
                     g.stubs.push(Box::new(move |a: &mut Asm| {
                         a.bind(slow);
                         a.mov_x(0, CPU); a.mov_x(1, BUS);
-                        // mov64 by hand: a second call site would move it out of line
-                        a.movz_x(2, (insn & 0xffff) as u32, 0);
-                        for sh in [16u32, 32, 48] { let part = ((insn >> sh) & 0xffff) as u32; if part != 0 { a.movk_x(2, part, sh); } }
+                        a.mov64(2, insn);
                         a.mov32(3, pc);
                         a.ldr_x(9, HELP, H_EXEC); a.blr(9);
                         a.tbnz(0, 0, tr);

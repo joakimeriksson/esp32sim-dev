@@ -103,6 +103,34 @@ fn divides_take_the_loop_back_edge() {
 }
 
 #[test]
+fn mid_block_divides_match_the_interpreter_in_rotated_windows() {
+    for (op, bytes) in CASES {
+        for windowbase in [0, 3] {
+            for divisor in [0, 7, (-7i32) as u32] {
+                let execute = |jit| {
+                    let mut bus = CodeBus { code: FlatRam::new(CODE, 16), versions: [0; 2], interpreted: 0 };
+                    bus.code.mem[..2].copy_from_slice(&[0x1b, 0x66]); // addi.n a6, a6, 1
+                    bus.code.mem[2..5].copy_from_slice(&bytes);
+                    bus.code.mem[5..8].copy_from_slice(&[0x06, 0xff, 0xff]);
+                    assert_eq!(decode(CODE, bus.code.fetch(CODE).unwrap()).op, Op::AddiN);
+                    let mut cpu = Cpu::new(0);
+                    cpu.ps = 0; cpu.windowbase = windowbase; cpu.blocks.jit_enabled = jit;
+                    cpu.set_ar(3, 0x1234_5678); cpu.set_ar(4, 100); cpu.set_ar(5, divisor); cpu.set_ar(6, 42);
+                    cpu.pc = CODE;
+                    let result = run_block(&mut cpu, &mut bus, 2);
+                    if jit { assert!(cpu.blocks.jit_instructions > 0); }
+                    Run { result, cpu, bus }
+                };
+                let (n, i) = (execute(true), execute(false));
+                assert_eq!(state(&n), state(&i), "{op:?} windowbase {windowbase} divisor {divisor:#x}");
+                assert_eq!(n.cpu.get_ar(6), 43);
+                if divisor == 0 { assert_eq!(n.cpu.epc[1], CODE + 2); }
+            }
+        }
+    }
+}
+
+#[test]
 fn a_zero_divisor_raises_through_the_interpreter() {
     for (op, bytes) in CASES {
         for looped in [false, true] {
