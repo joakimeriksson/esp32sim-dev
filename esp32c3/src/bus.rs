@@ -345,7 +345,10 @@ impl SocBus {
     /// The receive descriptor at `desc` (a masked pointer from `rx_next`) as the DMA would use it for a
     /// `total`-byte frame, if software armed it: owned and not yet filled, with a buffer, and with room
     /// for the frame. `None` means the receive DMA is stopped there. Stricter than the S3, which also
-    /// takes a descriptor whose `has_data` is still set.
+    /// takes a descriptor whose `has_data` is still set. With the EX238 hand-over that difference also
+    /// decides the restart: a still-filled descriptor plus a base write since the last frame sends the
+    /// C3 to `rx_base`, where the S3 overwrites the descriptor in place. A driver that processes frames
+    /// in order never gets there.
     fn wifi_rx_armed(&self, desc: u32, total: usize) -> Option<(u32, u32, u32, u32)> {
         if desc == 0 { return None; }
         let d = desc | esp_periph::DMA_ADDR_BASE;
