@@ -30,8 +30,10 @@ with tracking issues where available that list items and what "done" means:
    bit-identical with `--no-jit`). The inline TLB for loads/stores and the wasm backend for the
    browser build are in too. Left inside the JIT: register caching, inlined call/entry/retw; then
    NEON for the PIE lanes. `tools/bench.py` is the yardstick. The RISC-V chips (C3, C6, P4)
-   still fetch and decode every instruction: a decode cache, then a block cache, is their next
-   step, behind the same page-version checks the LX7 caches use.
+   still fetch and decode every instruction. A per-PC decode memo did not pay (EX249 in #310:
+   about as costly per hit as decoding), so their next step is a decoded-block cache like the
+   LX7's ([EX001](experiments.md#ex001)/[EX003](experiments.md#ex003)), behind the same
+   page-version checks.
 5. **ESP32-C3 (RISC-V)** — a draft is in ([esp32c3.md](esp32c3.md)): RV32IMC decoder verified
    against objdump, the C3 memory map and interrupt matrix, and unmodified IDF firmware booting
    from the mask ROM through the bootloader into FreeRTOS and `app_main` — verified against a

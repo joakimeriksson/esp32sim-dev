@@ -51,7 +51,9 @@ them the same way (`esp_soc::rom`: `ESP32SIM_ROM_DIR` first, then the newest ESP
 external tests still take the older names their evidence receipts use (`ADC_ROM_DIR`, `HOOKS_ROM`,
 `CLASSIC_I2C_ROM`) ahead of that. Without ESP-IDF,
 `tools/fetch-demo-assets.sh --no-linux` fetches them into `web/wasm/fw/`, where `tools/wasm-test.mjs`
-finds them by itself; for the cargo tests set `ESP32SIM_ROM_DIR=web/wasm/fw`.
+finds them by itself; for the cargo tests set `ESP32SIM_ROM_DIR=$PWD/web/wasm/fw`
+(absolute: `cargo test` runs each test from its own crate's directory). A set directory that lacks
+the file falls through to ESP-IDF's copy, so for evidence runs record which one was used.
 
 ```sh
 cargo test --release --workspace -- --include-ignored --skip external_      # ~15 s for the whole set

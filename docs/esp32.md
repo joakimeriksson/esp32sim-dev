@@ -30,7 +30,7 @@ cargo build --release -p esp32sim
 
 `hello_world_classic` compares the ROM banner, bootloader and application output
 and interrupt totals/per-source counts against committed goldens. The ROM comes from Espressif's
-ROM ELF package: ESP-IDF's copy is found by itself, otherwise set `ESP32SIM_ROM_DIR` to its directory.
+ROM ELF package: ESP-IDF's copy is found by itself, otherwise set `ESP32SIM_ROM_DIR` to its absolute directory.
 The three firmware binaries were built from the existing CC0 hello_world source
 with ESP-IDF 5.5.4, the pioarduino 55.03.38-1 platform and the esp32dev board.
 See the [reproducible build recipe](../examples/hello_world-classic/README.md).

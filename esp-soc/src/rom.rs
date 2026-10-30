@@ -22,7 +22,10 @@ fn find_in(file: &str, dir: Option<PathBuf>, home: Option<PathBuf>) -> Option<Pa
 
 /// `find` for tests and examples: a missing ROM panics naming both places, never a silent pass.
 pub fn require(file: &str) -> PathBuf {
-    find(file).unwrap_or_else(|| panic!("{file} not found: set {DIR_VAR} (tools/fetch-rom-elfs.sh DIR fetches them) or install ESP-IDF (~/.espressif/tools/esp-rom-elfs)"))
+    find(file).unwrap_or_else(|| {
+        let tried = std::env::var_os(DIR_VAR).map_or_else(|| "unset".into(), |d| format!("{:?}", PathBuf::from(d).join(file)));
+        panic!("{file} not found ({DIR_VAR}: {tried}): set {DIR_VAR} to an absolute directory (tools/fetch-rom-elfs.sh DIR fetches them) or install ESP-IDF (~/.espressif/tools/esp-rom-elfs)")
+    })
 }
 
 #[cfg(test)]

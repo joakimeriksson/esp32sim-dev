@@ -58,7 +58,8 @@ tools/fetch-demo-assets.sh --no-linux      # the S3, C3 and C6 ROMs into web/was
 ```
 
 Then pass `--rom web/wasm/fw/esp32s3_rev0_rom.elf` (or the C3/C6 file), or set
-`ESP32SIM_ROM_DIR=web/wasm/fw`, which the tests also use.
+`ESP32SIM_ROM_DIR=$PWD/web/wasm/fw`, which the tests also use. Give the tests an absolute path:
+`cargo test` runs each test from its own crate's directory.
 
 ## ESP32-S3
 

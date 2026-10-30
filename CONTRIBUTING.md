@@ -68,7 +68,7 @@ fetches all of them into `web/wasm/fw/`. The ROMs ESP-IDF 5.x installs
 ```sh
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy --release --target wasm32-unknown-unknown -p esp32sim-wasm --features jit-tests -- -D warnings
-ESP32SIM_ROM_DIR=web/wasm/fw cargo test --release --workspace -- --include-ignored --skip external_
+ESP32SIM_ROM_DIR=$PWD/web/wasm/fw cargo test --release --workspace -- --include-ignored --skip external_
 tools/wasm-build.sh && node tools/wasm-test.mjs hello c3-hello c6-hello p4-hello p4-c6-hosted p4-lcd35-synth c6-energy-scan c6-contiki c6-contiki-net c6-rpl-net panel tdisplay-prices tdisplay-schematik
 node tools/check-evidence-privacy.mjs
 ```
