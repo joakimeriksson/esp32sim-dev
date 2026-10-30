@@ -1,4 +1,4 @@
-# EX259: the idle 802.15.4 radio's round tick stops after the scene
+# EX262: the idle 802.15.4 radio's round tick stops after the scene
 
 Base: main `2e36224d`. Code commit: `69e441e65efb96c8c42df9dabb8870107cc5e670`; this receipt records that code. Toolchain 1.99.0, release profile unchanged. ARM64 macOS host.
 

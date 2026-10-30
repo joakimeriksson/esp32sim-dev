@@ -1,4 +1,4 @@
-"""802.15.4 idle-tick (EX259) mutation campaign: each mutant edits one changed line of
+"""802.15.4 idle-tick (EX262) mutation campaign: each mutant edits one changed line of
 esp32c6/src/radio.rs in a scratch worktree and runs the esp32c6 library tests, then (if none
 failed) every esp32c6 integration test. Killed only when a test FAILS at run time; a compile error
 is reported as such. Sources are restored after each case.
