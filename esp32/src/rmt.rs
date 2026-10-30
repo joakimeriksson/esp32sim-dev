@@ -11,10 +11,9 @@ const CONTINUOUS: u32 = 1 << 6;
 const APB_SOURCE: u32 = 1 << 17;
 const IDLE_LEVEL: u32 = 1 << 18;
 const IDLE_ENABLE: u32 = 1 << 19;
-/// Longest transmission handed to the board: 4096 WS2812 pixels, the S3's RMT DMA limit
-/// (`esp32s3/src/bus/dma.rs`). Wrap mode refills the 64-word block, so a 256-LED matrix sends
-/// 6144 symbols in one transmission. A longer stream still counts as a transmission but does not reach the board.
-const MAX_FRAME_BITS: usize = 24 * 4096;
+/// Wrap mode refills the 64-word block, so a 256-LED matrix sends 6144 symbols in one
+/// transmission. The limit and the policy past it are the shared model's.
+use esp_periph::rmt::MAX_FRAME_BITS;
 
 #[derive(Default)]
 struct Channel {
