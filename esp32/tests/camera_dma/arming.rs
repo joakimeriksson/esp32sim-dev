@@ -182,6 +182,27 @@ fn c71_initially_invalid_route_waits_instead_of_aborting() {
     assert_eq!(bytes(&mut b, B, 64), [0,0,248,0].repeat(16));
 }
 #[test]
+fn jpeg_large_guest_eof_delivers_unpadded_frame() {
+    let host = jpeg(4, 4, 7);
+    let stream: Vec<u8> = host.iter().flat_map(|&x| [0, 0, x, 0]).collect();
+    for eof in [0x0400_0000, u32::MAX] {
+        let mut b = setup(3);
+        write(&mut b, 0xda, 0x12);
+        b.board.set_camera_jpeg(Jpeg::parse(host.clone()).unwrap()).unwrap();
+        descriptor(&mut b, 0, 256, 0);
+        falling(&mut b);
+        arm(&mut b, eof);
+        tick_bus(&mut b, FRAME_CYCLES - VSYNC_CYCLES);
+        if eof.checked_mul(4).is_some() {
+            assert_eq!(&bytes(&mut b, B, stream.len() as u32)[..], &stream, "RXEOF_NUM={eof:#x}");
+        } else {
+            // Existing DMA policy rejects byte counts that overflow u32.
+            assert_ne!(raw(&mut b) & ERR, 0);
+        }
+        assert_eq!(raw(&mut b) & EOF, 0, "RXEOF_NUM={eof:#x}");
+    }
+}
+#[test]
 fn jpeg_claims_the_frame_with_its_first_word() {
     // cam_hal with a second free framebuffer: RX still runs across the falling
     // edge, then the driver stops, resets and restarts it. Inside the arm window

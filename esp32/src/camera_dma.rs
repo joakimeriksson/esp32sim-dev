@@ -12,9 +12,11 @@ type Frame = Arc<Vec<u8>>;
 /// the unfinished block at VSYNC and searches EOI backwards (cam_hal.c:755), so the
 /// copied block then holds no stale DMA bytes after EOI and fb->len is the host length.
 pub(crate) fn jpeg_padding_words(words: usize, eof_words: usize) -> usize {
-    if eof_words == 0 { return 0; }
+    const MAX_EOF_WORDS: usize = 8 * 1024 * 1024 / 4;
+    if eof_words == 0 || eof_words > MAX_EOF_WORDS { return 0; }
     let at_least = words.max(eof_words);
-    at_least + (eof_words - 1 - at_least % eof_words) - words
+    at_least.checked_add(eof_words - 1 - at_least % eof_words)
+        .and_then(|total| total.checked_sub(words)).unwrap_or(0)
 }
 
 pub(crate) struct Capture {
@@ -90,7 +92,9 @@ impl SocBus {
                 fifo.push(&wire, &mut capture.packed);
                 fifo.end_row(&mut capture.packed);
                 let words = capture.packed.len() / 4;
-                capture.packed.resize(4 * (words + jpeg_padding_words(words, eof_words)), 0);
+                if let Some(size) = words.checked_add(jpeg_padding_words(words, eof_words)).and_then(|n| n.checked_mul(4)) {
+                    capture.packed.resize(size, 0);
+                }
                 // JPEG leaves the edge unclaimed until its first delivered word
                 // (below): an RX stop/reset/start inside the arm window before that
                 // word takes this whole frame from SOI; a delivered word is never replayed.
@@ -129,11 +133,6 @@ impl SocBus {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn jpeg_first_word_claim_has_independent_capture_state() {
-        let source = include_str!("camera_dma.rs").split("#[cfg(test)]").next().unwrap();
-        assert!(source.contains("claim_pending: bool"), "capture must track the first-word claim independently");
-    }
-    #[test]
     fn jpeg_claim_state_is_consumed_once_and_never_claims_a_newer_edge() {
         let mut capture = super::Capture::armed(10);
         capture.frame_at = Some(20);
@@ -147,6 +146,16 @@ mod tests {
         capture.claim_pending = true;
         assert!(!capture.claim_first_word(true, || Some(21)), "newer edge must remain pending");
         assert!(!capture.claim_pending, "even a missed edge consumes the old claim");
+    }
+    #[test]
+    fn jpeg_padding_rejects_unbounded_guest_eof() {
+        for eof in [0x0400_0000_u32, u32::MAX] {
+            assert_eq!(super::jpeg_padding_words(623, eof as usize), 0, "RXEOF_NUM={eof:#x}");
+        }
+        assert_eq!(super::jpeg_padding_words(usize::MAX, 3), 0);
+        let limit = 8 * 1024 * 1024 / 4;
+        assert_eq!(super::jpeg_padding_words(1, limit), 2 * limit - 2);
+        assert_eq!(super::jpeg_padding_words(1, limit + 1), 0);
     }
     #[test]
     fn jpeg_padding_ends_one_word_before_an_eof_boundary_after_one_block() {

@@ -43,7 +43,8 @@ struct Sccb { sensor: Arc<Mutex<Ov2640>>, powered_down: Arc<Mutex<bool>> }
 // Power is shared with the SCCB device so a powered-down sensor does not ACK.
 // The board's output callbacks maintain this independently of frame requests.
 // One sensor sits on GPIO26/27: either I2C controller routed there reaches the
-// same registers (esp32-camera takes the controller from sccb_i2c_port).
+// same registers. SCCB_Init uses CONFIG_SCCB_HARDWARE_I2C_PORT (default I2C1);
+// the C8 fixture sets PORT0 in sdkconfig.defaults.
 impl I2cDevice for Sccb {
     fn pins(&self) -> Option<(u8, u8)> { Some((26, 27)) }
     fn start(&mut self, read: bool) -> bool { !*self.powered_down.lock().unwrap() && self.sensor.lock().unwrap().start(read) }

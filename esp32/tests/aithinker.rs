@@ -130,8 +130,8 @@ fn aithinker_sccb_requires_both_physical_wires() {
 }
 #[test]
 fn aithinker_sccb_is_one_sensor_on_either_controller() {
-    // esp32-camera takes the controller from sccb_i2c_port; the sensor is on
-    // the wires, so I2C1 routed to GPIO26/27 reaches the same registers.
+    // SCCB_Init uses CONFIG_SCCB_HARDWARE_I2C_PORT (default I2C1); C8
+    // sets PORT0. Either controller routed to GPIO26/27 reaches the sensor.
     let read_on = |bus: &mut SocBus, port, reg| {
         assert_eq!(transfer_on(bus, port, &[reg], false).0 & INT_NACK, 0);
         let (status, byte) = transfer_on(bus, port, &[], true);

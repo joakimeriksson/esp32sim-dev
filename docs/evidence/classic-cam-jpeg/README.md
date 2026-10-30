@@ -1,6 +1,6 @@
 # Classic ESP32-CAM: host JPEG through I2S0 camera DMA (EX256)
 
-Two commits on main `66eb9704`:
+Two original commits on main `66eb9704`, followed by the padding review fix:
 
 1. `esp32: the AI-Thinker camera's SCCB answers on either I2C controller`:
    the OV2640 on GPIO26/27 was attached to I2C0 only.
@@ -35,7 +35,9 @@ mode delivers no frame and prints one notice.
 
 At a frame start in JPEG mode the I2S0 capture packs the JPEG bytes through the
 same FIFO packer as raw rows, then appends zero words up to one word before an
-RXEOF_NUM boundary, never ending inside the first EOF block. esp32-camera
+RXEOF_NUM boundary, never ending inside the first EOF block when RXEOF_NUM is
+at most 8 MiB in words. Larger counts are delivered without padding; the existing
+DMA rejects counts whose conversion to bytes overflows u32. esp32-camera
 v2.1.4 (`cam_hal.c` 291-380) checks SOI on the first EOF block, copies the
 unfinished block at VSYNC and searches EOI backwards (`cam_hal.c` 755), so the
 framebuffer holds the host bytes, `fb->len` is the host length and no stale DMA
@@ -125,7 +127,8 @@ until `qvga-a.jpg` is accepted. The CLI test runs `--cam-image vga-a.jpg` with
 [`arduino-probe.ino`](arduino-probe.ino): a common ESP32-CAM Arduino camera
 setup (AI-Thinker pins, 20 MHz XCLK, `PIXFORMAT_JPEG`, `FRAMESIZE_VGA`,
 `jpeg_quality = 12`, `fb_count = 1`; `camera_config_t` on the stack with
-`fb_location`, `grab_mode` and `sccb_i2c_port` never set), with the network
+`fb_location` and `grab_mode` never set; `sccb_i2c_port` is also unset but
+unused because SDA/SCL pins are supplied), with the network
 code replaced by a hash of each frame. Built with arduino-cli 1.5.1, core
 esp32:esp32 3.3.11, FQBN `esp32:esp32:esp32cam`; merged image
 `48f5039f08b78ea5c72a9cf8cb43ba45d82de38e390d60aa2a677045e2ab6b67`.
@@ -137,13 +140,15 @@ esp32sim --chip esp32 --board ai-thinker-cam --psram-mb 4 --boot rom \
 
 | build | result |
 | --- | --- |
-| main `2e36224d` | `Detected camera not supported` (SCCB NACK at 0x30), `S init=262`; `--cam-image vga-a.jpg` is `unsupported image` |
+| main `66eb9704` | `Detected camera not supported`, `S init=262`; `--cam-image vga-a.jpg` is `unsupported image` |
 | this branch | `S init=0 psram=1`, frames 0..8 each `640x480 len=6218 format=4 PSRAM sha256=f602a493…a576998` |
 | this branch, `--psram-mb 0` | `frame buffer malloc failed` |
 
-With nothing set, the stack left `fb_location` as `CAMERA_FB_IN_PSRAM` and
-`sccb_i2c_port` as a controller other than I2C0 in this run (inferred from the
-two failures; uninitialized values are not a contract). The sketch needs the
+With nothing set, the stack left `fb_location` as `CAMERA_FB_IN_PSRAM` in
+this run (inferred from the allocation failure; an uninitialized value is not
+a contract). With explicit SDA/SCL pins, the driver calls `SCCB_Init`, which
+uses `CONFIG_SCCB_HARDWARE_I2C_PORT` (default I2C1), not `sccb_i2c_port`.
+The C8 fixture selects PORT0 in its `sdkconfig.defaults`. The sketch needs the
 optional 4 MiB PSRAM; the classic default (none) is unchanged here.
 
 ## Checks and mutations
@@ -151,11 +156,22 @@ optional 4 MiB PSRAM; the classic default (none) is unchanged here.
 With Rust 1.99.0, native and wasm clippy, ROM-enabled and plain workspace
 tests, the wasm build and eight demo tests passed. The privacy check passed.
 Seven normalized fixture outputs, exit codes and instruction counts matched a
-fresh build of main `66eb9704`; 21 selected normalized hot-path symbols matched.
-Both builds used `cargo +1.99.0 build --release --bins` with the same profile.
+fresh build of main `66eb9704` on the earlier `628206d6` head; 21 selected
+normalized hot-path symbols matched that base. Both builds used `cargo +1.99.0
+build --release --bins` with the same profile.
 
-A fresh campaign against the identical code and tests passed all five unmutated
-control plans and killed 88 of 93 mutants by assertion. Five survivors are
+Padding regression: RXEOF_NUM `0x0400_0000` leaves the packed JPEG unpadded;
+`u32::MAX` triggers the existing DMA byte-count overflow error without an EOF.
+The test process covering both used 8,323,072 bytes maximum RSS on the native
+host. The unit test also checks the inclusive 8 MiB-in-words limit, one word
+above it, and checked addition at `usize::MAX`. Removing the limit and making
+it exclusive each fail an assertion; replacing checked addition with unchecked
+arithmetic panics in the debug test. This is a panic-detected overflow mutant,
+not an assertion kill. The `examples/classic-camera/mutate.py` public-driver
+control passed and its five transport mutants were killed by assertions.
+
+A campaign on `628206d6` passed all five unmutated control plans and killed 88
+of 93 mutants by assertion. Five survivors are
 redundant guards: P6 is rejected on the next marker; P9 and S5 cannot produce
 a valid scan without frame components; S14 cannot select more distinct known
 components than exist; S15 is enforced by the final three-byte SOS parameter
