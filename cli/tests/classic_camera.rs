@@ -10,11 +10,11 @@ fn classic_board_usage_lists_camera() {
 }
 
 #[test]
-#[ignore = "ESP32SIM_ROM_DIR must contain esp32_rev300_rom.elf"]
+#[ignore = "needs esp32_rev300_rom.elf (ESP32SIM_ROM_DIR or ESP-IDF)"]
 fn classic_camera_image_captures_nonzero_frame() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let fixture = root.join("esp32/tests/fixtures/classic-camera");
-    let roms = std::env::var_os("ESP32SIM_ROM_DIR").expect("set ESP32SIM_ROM_DIR");
+    let rom = esp_soc::rom::require("esp32_rev300_rom.elf");
     let image = std::env::temp_dir().join(format!("esp32sim-camera-{}.ppm", std::process::id()));
     let mut ppm = b"P6\n160 120\n255\n".to_vec();
     for p in 0..160 * 120 {
@@ -23,7 +23,7 @@ fn classic_camera_image_captures_nonzero_frame() {
     fs::write(&image, ppm).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_esp32sim"))
         .args(["--chip", "esp32", "--board", "ai-thinker-cam", "--boot", "rom", "--rom"])
-        .arg(Path::new(&roms).join("esp32_rev300_rom.elf"))
+        .arg(&rom)
         .arg("--bootloader").arg(fixture.join("bootloader/bootloader.bin"))
         .arg("--ptable").arg(fixture.join("partition_table/partition-table.bin"))
         .arg("--app").arg(fixture.join("classic_camera.bin"))

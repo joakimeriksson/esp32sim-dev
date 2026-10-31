@@ -165,7 +165,7 @@ pub struct Peripherals {
     pub intc: Intc,
     pub spi0: SpiMem,
     pub spi1: SpiMem,
-    pub gdma: crate::gdma::Gdma,
+    pub gdma: esp_periph::gdma::GdmaAhb,
     pub sha: Sha,
     pub aes: Aes,
     pub rsa: Rsa,
@@ -282,7 +282,7 @@ impl Peripherals {
             }, extmem: Extmem::new(), intc: Intc::new(),
             spi0: { let mut s = SpiMem::new(false); s.has_psram = false; s },
             spi1: { let mut s = SpiMem::new(true); s.has_psram = false; s },   // the C3 has no PSRAM
-            gdma: Default::default(),
+            gdma: esp_periph::gdma::GdmaAhb::new(esp_periph::gdma::AhbLayout::C3, esp_periph::DMA_ADDR_BASE),
             sha: Sha::new(), aes: Aes::new(), rsa: Rsa::new(), rng: Rng::new(),
             misc: {
                 let mut m = Misc::new();

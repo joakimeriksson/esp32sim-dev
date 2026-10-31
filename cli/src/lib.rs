@@ -265,14 +265,8 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
     o
 }
 
-/// ESP32SIM_ROM_DIR, then `~/.espressif/tools/esp-rom-elfs/*/<name>` (newest first).
-fn find_rom(name: &str) -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("ESP32SIM_ROM_DIR").map(|d| PathBuf::from(d).join(name)).filter(|p| p.is_file()) { return Some(p) }
-    let home = std::env::var("HOME").ok()?;
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(format!("{}/.espressif/tools/esp-rom-elfs", home)).ok()?.flatten().map(|e| e.path()).collect();
-    dirs.sort();
-    dirs.into_iter().rev().map(|d| d.join(name)).find(|p| p.exists())
-}
+/// ESP32SIM_ROM_DIR, then `~/.espressif/tools/esp-rom-elfs/*/<name>` (newest first); the tests use the same lookup.
+fn find_rom(name: &str) -> Option<PathBuf> { esp_soc::rom::find(name) }
 
 pub fn run_cli(default_chip: &str) {
     let args: Vec<String> = std::env::args().collect();

@@ -1,5 +1,6 @@
 //! A tiny AArch64 encoder: only the instructions the block compiler emits. Every encoding is
-//! checked against clang's assembler in `tests::encodings_match_clang`.
+//! checked against clang's assembler: `tests::encodings_match_fixture` compares with the fixture
+//! `tests::external_encodings_match_clang` regenerates.
 #![allow(dead_code)]
 
 pub type Reg = u32;
