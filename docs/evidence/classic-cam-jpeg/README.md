@@ -275,7 +275,37 @@ slice comparison. The campaign does not prove image decoding or semantics.
 
 ## CPU comparison
 
-PENDING
+Maintainer's [run](https://github.com/mikroverk/esp32sim/pull/328#issuecomment-6540589479),
+2026-10-31: user CPU, base `66eb9704`, new `0f54dbc2`. The maintainer
+used `docs/evidence/p4-cpu/cpu_pairs.py` from the base with a local
+`classic-hello` workload added. Both trees were extracted with `git archive`
+into sibling directories of equal path length and built with
+`cargo build --release --bins`, rustc 1.99.1 (58cf8f9c3 2026-10-13),
+`aarch64-apple-darwin`, Apple M5 Max (18 cores), macOS 27.0.1. ROMs were
+esp-rom-elfs 20260528 (`tools/fetch-rom-elfs.sh`). Each workload started at
+1-minute load below 5 with nothing building; one warmup pair preceded seven
+alternating pairs, run from the base tree's root.
+
+| workload | base median (range) | new median (range) | change | new slower | instructions, console | load before → after |
+| --- | --- | --- | --- | --- | --- | --- |
+| s3-hello (30 s) | 0.260 s (0.250–0.260) | 0.260 s (0.250–0.260) | +0.0% | 1/7 | identical in all 16 runs | 3.48 → 3.36 |
+| c3-hello (30 s) | 2.530 s (2.460–2.620) | 2.470 s (2.440–2.530) | -2.4% | 1/7 | identical in all 16 runs | 3.36 → 3.56 |
+| c6-hello (30 s) | 1.600 s (1.580–1.650) | 1.620 s (1.570–1.640) | +1.2% | 3/7 | identical in all 16 runs | 3.56 → 3.29 |
+| pocket-tank (8 s) | 7.260 s (7.110–7.400) | 7.250 s (7.170–7.440) | -0.1% | 3/7 | identical in all 16 runs | 3.29 → 4.43 |
+| classic-hello (30 s) | 0.370 s (0.370–0.380) | 0.380 s (0.360–0.380) | +2.7% | 3/7 | identical in all 16 runs | 4.43 → 4.40 |
+
+The maintainer's verdict: nothing flagged (slower in at least 6/7 pairs is the
+flag). Classic-hello is +2.7%, slower in 3/7, with overlapping ranges; the
+camera path runs only in camera mode. These are non-camera workloads, not a
+measurement of camera-mode performance.
+
+[Paired-run JSON](328-0f54dbc2-66eb9704.json) is the maintainer's posted
+sanitized data; only the ROM directory was replaced with `$ESP32SIM_ROM_DIR`.
+The maintainer reported original SHA-256 prefix `719dd684` and sanitized
+SHA-256 prefix `45865fd8`; the original is not retained here. The JSON code
+block as posted has SHA-256
+`1b85653e3a8e25f891aa83fa8e33cdc0f629f2812d5d1980d07a7b1e718e7fa0`;
+its bytes do not match that reported sanitized-file prefix.
 
 ## Limits
 
