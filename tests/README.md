@@ -1,6 +1,6 @@
 # Tests
 
-Five layers, base to top. `cargo test --workspace` runs the hermetic ones (no toolchain, no
+Eight layers, base to top. `cargo test --workspace` runs the hermetic ones (no toolchain, no
 download, no hardware); the goldens and the ABI tests need the mask ROM ELFs and run with
 `--include-ignored` (CI fetches the ELFs). Nothing skips silently: a test either has a
 checked-in oracle or is `#[ignore]`d with the reason in its name.
@@ -13,7 +13,7 @@ checked-in oracle or is `#[ignore]`d with the reason in its name.
 | audio source clocks | `cli/tests/pcm_sources.rs`, `cli/tests/adc_stream.rs` | pin routing, independent source clocks, DMA stalls, resets and exact ADC raw counts at all attenuations; no local firmware required |
 | microphone input | `cli/tests/i2s_rx.rs`, `esp-periph/src/i2s/rx.rs` | three-chip MMIO to guest DMA, C3 interrupt layout, descriptor ownership/EOF, stereo packing, clocks, reset persistence and unsupported modes; no firmware or home-directory inputs |
 | machine | `esp32s3/tests/machine.rs`, `esp-soc/tests/parsers.rs`, `esp32p4/tests/harts.rs`, `esp32p4/tests/revision.rs`, `cli/tests/p4_revision.rs` | idle cores skip time, core 1 runs when SYSTEM releases it, what a chip reset keeps, scripts against the board's pin names and encoder, console backlogs and masks, observers on both paths; the ELF/app-image/picture loaders never panic on random, truncated or hostile input; the P4's CLIC take rule and cross-hart reservations through `Machine`, and an image built for P4 rev ≥ 3 refused by the loaders and the CLI before it runs |
-| whole runs | `cli/tests/goldens.rs`, `wasm/tests/abi.rs` | the goldens below; the wasm C ABI driven natively for both chips, checking the web protocol's `board`, `serial`, `stat`, frame, audio and ring messages |
+| whole runs | `cli/tests/goldens.rs`, `wasm/tests/abi.rs` | the goldens below; the wasm C ABI driven natively for the S3, C3 and C6, checking the web protocol's `board`, `serial`, `stat`, frame, audio and ring messages |
 | the wasm build itself | `tools/wasm-test.mjs` | the real `esp32sim.wasm` under Node, driven through the page's firmware manifests (`web/wasm/fw/*.json`): boot, run, drain the outbox, expect the board message and the console line, no panic — the only layer that sees a wasm-only abort (a std that panics where it used to return nothing took every demo down once) |
 
 GPIO routed-drive checks live in `cli/tests/routed_waveform.rs` and
@@ -46,9 +46,14 @@ audio sample is a failure, not noise (see `docs/decisions.md`, "Performance").
 
 They need the mask ROM ELFs, which ship with ESP-IDF (`~/.espressif/tools/esp-rom-elfs/`) or
 can be pointed at with `ESP32SIM_ROM_DIR`, so they are `#[ignore]`d by default and never skip
-silently: without a ROM they fail with the path they looked for. Without ESP-IDF,
+silently: without a ROM they fail naming the file and both places. Every test and the CLI find
+them the same way (`esp_soc::rom`: `ESP32SIM_ROM_DIR` first, then the newest ESP-IDF copy); three
+external tests still take the older names their evidence receipts use (`ADC_ROM_DIR`, `HOOKS_ROM`,
+`CLASSIC_I2C_ROM`) ahead of that. Without ESP-IDF,
 `tools/fetch-demo-assets.sh --no-linux` fetches them into `web/wasm/fw/`, where `tools/wasm-test.mjs`
-finds them by itself; for the cargo tests set `ESP32SIM_ROM_DIR=web/wasm/fw`.
+finds them by itself; for the cargo tests set `ESP32SIM_ROM_DIR=$PWD/web/wasm/fw`
+(absolute: `cargo test` runs each test from its own crate's directory). A set directory that lacks
+the file falls through to ESP-IDF's copy, so for evidence runs record which one was used.
 
 ```sh
 cargo test --release --workspace -- --include-ignored --skip external_      # ~15 s for the whole set
