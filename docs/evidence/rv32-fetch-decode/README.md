@@ -70,8 +70,20 @@ Goldens unchanged.
 
 ## Limits
 
-C3 and P4 are checked for exact work and disassembly, not timed. The display starter is a public C6 LCD starter image (hashes in [inputs.json](inputs.json)), not committed. Idle rounds, deadlines and the machine loop are untouched; the step itself (`step_outcome`, [EX168](../../experiments.md#ex168)'s step facts) is unchanged in source and only grows by the inlined fetch and decoders.
+C3 is timed in the maintainer run below; P4 is checked for exact work and disassembly, not timed. The display starter is a public C6 LCD starter image (hashes in [inputs.json](inputs.json)), not committed. Idle rounds, deadlines and the machine loop are untouched; the step itself (`step_outcome`, [EX168](../../experiments.md#ex168)'s step facts) is unchanged in source and only grows by the inlined fetch and decoders.
 
 ## CPU comparison
 
-PENDING
+Maintainer's run ([PR #310 comment](https://github.com/mikroverk/esp32sim/pull/310#issuecomment-6540590356)), October 31, 2026: `cpu_pairs.py` from `docs/evidence/p4-cpu` on base `66eb9704`, new `f91b3908`. Trees extracted with `git archive` into sibling paths of equal length and built with `cargo build --release --bins`; rustc 1.99.1 (58cf8f9c3 2026-10-13), aarch64-apple-darwin, Apple M5 Max (18 cores), macOS 27.0.1. ROMs: esp-rom-elfs 20260528. One warmup pair and seven alternating pairs per workload; each started at 1-minute load below 5 with no build running. `c6-wifi-station` is the script's own workload. User CPU:
+
+| workload | base median (range) | new median (range) | change | new slower | instructions, console | load before → after |
+| --- | --- | --- | --- | --- | --- | --- |
+| s3-hello (30 s) | 0.260 s (0.260–0.260) | 0.260 s (0.250–0.260) | +0.0% | 0/7 | identical in all 16 runs | 4.40 → 4.21 |
+| c3-hello (30 s) | 2.530 s (2.460–2.530) | 2.510 s (2.460–2.570) | -0.8% | 2/7 | identical in all 16 runs | 4.21 → 4.27 |
+| c6-hello (30 s) | 1.590 s (1.580–1.630) | 1.600 s (1.590–1.650) | +0.6% | 5/7 | identical in all 16 runs | 4.27 → 4.70 |
+| pocket-tank (8 s) | 7.200 s (7.170–7.240) | 7.180 s (7.130–7.240) | -0.3% | 2/7 | identical in all 16 runs | 4.70 → 3.38 |
+| c6-wifi-station (14 s) | 1.070 s (1.050–1.080) | 1.030 s (1.010–1.050) | -3.7% | 0/7 | identical in all 16 runs | 3.38 → 3.62 |
+
+The maintainer reports nothing flagged (new slower ≥6/7 is the flag). C6 Wi-Fi station was 3.7% faster, 0/7 slower; C6 hello was +0.6%, 5/7 slower with overlapping ranges, noise at this resolution. Energy-scan and the display starter are absent from this run; their busy-fixture gains above are our separate daytime measurements.
+
+[Posted JSON](maintainer-cpu-f91b3908.json): the maintainer replaced only the ROM directory with `$ESP32SIM_ROM_DIR`; he reported raw SHA-256 `b076fc07…`, sanitized `2d015ea1…`. The raw file was not provided; this redaction removes the local ROM path without changing measured values. The JSON extracted from the posted code block has SHA-256 `04b22c25bb539ddbd10cd88082a86fef21f9b8c9f87d28a559739810f21ad8c0`, not the reported sanitized prefix; its serialization may differ.
