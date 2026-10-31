@@ -2,7 +2,7 @@
 
 Base: main `2e36224d`. Code commit: `69e441e65efb96c8c42df9dabb8870107cc5e670`; this receipt records that code. Toolchain 1.99.0, release profile unchanged. ARM64 macOS host.
 
-Branch rebased onto main `66eb9704`; code range-diff is `=`.
+Branch rebased onto main `66eb9704`; code range-diff is `=`. The measured code `69e441e6` matches branch head `c9bfd5e6` in code, as verified in the PR review.
 
 ## What
 
@@ -94,11 +94,30 @@ Same stop and console hash on every row; no CPU-time claim.
 
 ## CPU comparison
 
-PENDING
+The following is the maintainer's run, reported in [PR #324](https://github.com/mikroverk/esp32sim/pull/324#issuecomment-6540590646), not a run by the authors of this receipt. He used `cpu_pairs.py` from `docs/evidence/p4-cpu` at `66eb9704`, with base `66eb9704` and new `c9bfd5e6`. Both trees were extracted with `git archive` into equal-length sibling paths and built with `cargo build --release --bins`; rustc 1.99.1 (58cf8f9c3 2026-10-13), aarch64-apple-darwin, Apple M5 Max (18 cores), macOS 27.0.1. Each workload started with 1-minute load below 5 and nothing building. ROMs: esp-rom-elfs 20260528 (`tools/fetch-rom-elfs.sh`). From the base root: one warmup pair and seven alternating pairs per workload; `c6-wifi-station` is the script's workload.
+
+| workload | base median (range) | new median (range) | change | new slower | instructions, console | load before → after |
+| --- | --- | --- | --- | --- | --- | --- |
+| s3-hello (30 s) | 0.260 s (0.250–0.270) | 0.260 s (0.260–0.270) | +0.0% | 3/7 | identical in all 16 runs | 3.62 → 3.57 |
+| c3-hello (30 s) | 2.480 s (2.460–2.520) | 2.510 s (2.470–2.820) | +1.2% | 6/7 | identical in all 16 runs | 3.57 → 3.30 |
+| c6-hello (30 s) | 1.620 s (1.590–1.650) | 1.530 s (1.500–1.580) | -5.6% | 0/7 | identical in all 16 runs | 3.30 → 3.30 |
+| pocket-tank (8 s) | 7.300 s (7.220–7.570) | 7.330 s (7.170–7.370) | +0.4% | 3/7 | identical in all 16 runs | 3.30 → 4.36 |
+| c6-wifi-station (14 s) | 1.060 s (1.050–1.070) | 1.020 s (1.010–1.060) | -3.8% | 0/7 | identical in all 16 runs | 4.36 → 3.90 |
+
+The maintainer attributes the C6 improvements to skipping the idle radio tick. The first c3-hello run is flagged (new slower in 6/7 pairs, +1.2%, overlapping ranges). C3 does not execute `radio.rs`, but `esp32sim-c3` links the C6 crate through the CLI library. He immediately re-ran c3-hello:
+
+| workload | base median (range) | new median (range) | change | new slower | instructions, console | load before → after |
+| --- | --- | --- | --- | --- | --- | --- |
+| c3-hello (30 s) | 2.550 s (2.490–3.010) | 2.490 s (2.460–2.720) | -2.4% | 2/7 | identical in all 16 runs | 2.78 → 3.17 |
+
+The maintainer's verdict is that the initial flag was noise, not layout: the re-run was −2.4%, slower in 2/7 pairs. Both runs are retained; this conclusion is his interpretation, not a separately reproduced attribution.
+
+His posted JSON is preserved as [first run](324-c9bfd5e6-66eb9704.json) and [C3 re-run](324-c9bfd5e6-66eb9704-c3rerun.json). He reports that only the ROM directory was redacted as `$ESP32SIM_ROM_DIR`; the first raw and sanitized SHA-256 prefixes are `d480090f…` and `99eea467…`, and the re-run's are `0ff89036…` and `f16ccb75…`, respectively. The redaction removes the local path but preserves workload identification and measurements. The JSON code blocks extracted from the comment, with a final newline, hash to `2c9dd8e2a6dd775487f413e630039ebf3dcea09a0ae9cc0a5e330b17952c8b03` and `5f87d9f2d119e53fc008e0487a7f45b539557121dd793411f5fedfc42cb463ad`; these differ from the posted sanitized hash prefixes, so the original sanitized files' byte formatting is not verified.
+
 
 ## Limits
 
-A firmware that keeps a radio timer or scan running (c6-energy-scan scans most of the time) pays the full tick as before plus the recompute; the change only removes work while the radio is idle. Native only, not a browser or hardware claim. CPU table (1 warmup + 7 pairs, quiet machine) pending.
+A firmware that keeps a radio timer or scan running (c6-energy-scan scans most of the time) pays the full tick as before plus the recompute; the change only removes work while the radio is idle. Native only, not a browser or hardware claim.
 
 ## Checks
 
