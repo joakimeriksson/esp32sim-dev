@@ -30,7 +30,9 @@
 //! A line that is not UTF-8 JSON is ignored, and one longer than `LINE_MAX` (64 KiB) is dropped
 //! whole, with one warning, the board reading on from the next newline; within one, a key whose value is not an array of finite
 //! numbers of the right length is ignored, and so are keys the board does not know. When the
-//! simulation disconnects the board returns to its own motor model and the link waits for the next.
+//! simulation disconnects the board returns to its own motor model and an IMU at rest, keeping the
+//! orientation, magnetic field and battery reading the simulation last set (`disconnected`), and
+//! the link waits for the next.
 use std::io::{BufRead, BufReader, Read};
 use std::sync::mpsc::SyncSender;
 use esp_soc::devices::{Icm20948Input, Ina219Shared};
@@ -140,6 +142,16 @@ pub fn line(t_ns: u64, d: &Drive, pt: [f64; 2]) -> String {
             d.duty[0], d.duty[1], d.speed_mps[0], d.speed_mps[1], d.travel_m[0], d.travel_m[1], pt[0], pt[1], d.lights[0], d.lights[1])
 }
 
+/// What the board keeps when the simulation goes: it falls back to what it does without one,
+/// its own motor model (from the speeds the wheels had) and an IMU at rest (angular rate and linear
+/// acceleration zero), but nothing moves the rover back, so the orientation, the magnetic field
+/// and the battery reading stay where the simulation left them.
+pub fn disconnected(drive: &DriveShared, imu: &Icm20948Input) {
+    imu.set_angular_rate([0.0; 3]);
+    imu.set_linear_accel([0.0; 3]);
+    drive.lock().unwrap_or_else(|e| e.into_inner()).external = false;
+}
+
 /// Starts the link thread. It writes the lines the board queues on `rx` to the simulation (and
 /// drops them while none is connected), applies what comes back, and ends when the board is gone.
 #[cfg(not(target_arch = "wasm32"))]
@@ -175,7 +187,7 @@ pub fn spawn(addr: String, rx: std::sync::mpsc::Receiver<String>, drive: DriveSh
             };
             let _ = w.shutdown(std::net::Shutdown::Both);
             let _ = peer.join();
-            drive.lock().unwrap_or_else(|e| e.into_inner()).external = false;
+            disconnected(&drive, &imu);
             eprintln!("[emu] ros-driver: simulation disconnected");
             if board_gone { return; }
             said = false;
@@ -214,6 +226,21 @@ mod tests {
         // a key's name inside another key's string value does not hide the key itself
         apply(r#"{"src":"a","a" : [ 1, 2.5 ,-3 ]}"#, &drive, &imu, &bat);
         assert_eq!(imu.get().linear_accel, [1.0, 2.5, -3.0]);
+    }
+
+    #[test]
+    fn a_disconnect_stops_the_motion_and_keeps_the_pose_and_battery() {
+        let drive: DriveShared = Default::default();
+        let imu = Icm20948Input::default();
+        let bat = Arc::new(Mutex::new(Ina219Input { bus_v: 11.8, current_a: 0.25, shunt_ohm: 0.01 }));
+        apply(r#"{"speed":[0.3,0.3],"q":[0,0,0,1],"w":[0,0,1],"a":[0.5,0,0],"mag":[1,2,3],"bat":[11.2,3]}"#, &drive, &imu, &bat);
+        disconnected(&drive, &imu);
+        let p = imu.get();
+        assert!(!drive.lock().unwrap().external);
+        assert_eq!((p.angular_rate, p.linear_accel), ([0.0; 3], [0.0; 3]));
+        assert_eq!((p.orientation, p.mag_field), ([0.0, 0.0, 0.0, 1.0], [1.0, 2.0, 3.0]));
+        let b = *bat.lock().unwrap();
+        assert_eq!((b.bus_v, b.current_a), (11.2, 3.0));
     }
 
     #[test]

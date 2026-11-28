@@ -266,7 +266,10 @@ finite numbers of the right length is ignored, and so are keys the board does no
 longer than 64 KiB (`rover_sim::LINE_MAX`; this protocol's lines are well under 1 KiB) is dropped
 whole, with one warning, and the board reads on from the next newline, so a peer that never sends
 one cannot grow the emulator's memory. When the
-simulation disconnects, the board goes back to its own motor model. The link is native only:
+simulation disconnects, the board goes back to what it does without one: its own motor model,
+starting from the speeds the wheels had, and an IMU at rest (angular rate and linear
+acceleration zero). Nothing moves the rover back, so the IMU's orientation and magnetic field
+and the INA219's voltage and current keep the values the simulation last sent. The link is native only:
 the browser build has no sockets. `esp32/src/board/rover_sim.rs` has the details.
 
 `cli/tests/ugv_rover.rs` (`external_ugv_base_drives_and_reports_odometry`, with
