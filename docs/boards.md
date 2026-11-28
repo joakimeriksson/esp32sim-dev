@@ -354,7 +354,8 @@ See [the fixture and scope](esp32.md#the-camera---board-ai-thinker-cam).
 | Two ST3215 bus servos (pan-tilt: pan ID 2, tilt ID 1) | servo line S_TXD 19 / S_RXD 18 (UART1 at 1 Mbaud, ugv_config.h) | `St3215Bus` (esp-soc `devices`): Feetech's STS protocol (PING, READ, WRITE, REG_WRITE/ACTION, SYNC_READ, SYNC_WRITE), the memory table SCServo's `SMS_STS` uses, answers paced at the line rate after the return delay; the shaft runs to the goal at the goal speed and acceleration (0..4095 = 360°, 3072 step/s top speed); no load or stall. The firmware drives it with `moduleType` 2 (`{"T":900,"main":2,"module":2}`) and reports `pan`/`tilt` in T:1001 |
 
 Selected with `--chip esp32 --board waveshare-ros-driver` (aliases `ros-driver`, `ugv-rover`);
-`,sim=HOST:PORT` links the wheels, IMU and battery to a physics simulation, and tells it the gimbal's pan and tilt;
+`,sim=HOST:PORT` links the wheels, IMU and battery to a physics simulation, and tells it the gimbal's pan and tilt
+(a provisional protocol, lines stamped with emulated time; implies `--realtime`);
 the same board drives the RaspRover and UGV Beast (other wheel constants, not modelled here). Not to be
 confused with Waveshare's General Driver for Robots (WAVE ROVER, UGV01), a different board;
 [esp32.md](esp32.md#the-board---board-waveshare-ros-driver).

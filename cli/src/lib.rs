@@ -719,6 +719,8 @@ fn setup_esp32(o: &Opts) -> esp32::Machine {
     if !o.debug.is_empty() { let mut f = esp_soc::DebugFlags::from_env(); for d in &o.debug { f.parse(d); } m.set_debug(&f); }
     let board = if o.board == "atech14" { "none" } else { &o.board };
     m.bus.board = esp32::board::make_board(board).unwrap_or_else(|| usage_error(&format!("unknown classic ESP32 board '{board}' (none, bare, esp32dev, ttgo-tdisplay, cyd, ai-thinker-cam, ulanzi-tc001)")));
+    // a physics simulation integrates its own clock: hold the run to 1x, as --uart-tcp does
+    if esp32::board::sim_addr(board).is_ok_and(|a| a.is_some()) { m.rt.enabled = true; }
     m.bus.attach_board_devices();
     set_camera_image(&mut m.bus.board, o.cam_image.as_deref());
     let net_log = m.bus.debug.has("net");

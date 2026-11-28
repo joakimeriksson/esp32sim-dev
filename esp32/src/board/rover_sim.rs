@@ -1,10 +1,19 @@
 //! The `waveshare-ros-driver` board's link to a physics simulation (`--board
 //! waveshare-ros-driver,sim=HOST:PORT`): the board connects to HOST:PORT over TCP, retrying
-//! while nobody listens, and exchanges one JSON object per line in wall-clock time (the run is
-//! `--realtime`-paced when a host drives it, as with `--uart-tcp`).
+//! while nobody listens, and exchanges one JSON object per line. The protocol is provisional: it
+//! is meant to become message types on #388's socket session, whose `sync`/`quiet_until` would
+//! hold the guest in lock-step with the simulation.
 //!
-//! Board to simulation, every 10 ms: `{"duty":[l,r],"speed":[l,r],"travel":[l,r],"pt":[pan,tilt],"led":[io4,io5]}`,
-//! the signed H-bridge duty (-1..1) per side, the wheel speeds (m/s) and travel (m) the encoders
+//! Time: every line the board sends carries `"t"`, the emulated time in ns (as `--cooja` stamps
+//! its messages), and the board sends one every 10 ms of emulated time (`PERIOD_NS`), boundaries
+//! at multiples of 10 ms. What the simulation sends is applied when it arrives, so the guest sees
+//! it at whatever emulated time that is; `sim=` therefore implies `--realtime`, which holds the
+//! run to at most 1x, the rate a simulation integrating its own wall clock assumes. A host too slow
+//! for real time still runs slower than 1x, and `"t"` shows the simulation by how much. Runs with
+//! a simulation are not reproducible.
+//!
+//! Board to simulation, every 10 ms of emulated time: `{"t":ns,"duty":[l,r],"speed":[l,r],"travel":[l,r],"pt":[pan,tilt],"led":[io4,io5]}`,
+//! the emulated time, the signed H-bridge duty (-1..1) per side, the wheel speeds (m/s) and travel (m) the encoders
 //! report, and the pan-tilt gimbal's present angles in degrees from its servos' shafts, in the
 //! firmware's convention (`ros_driver::GimbalShared`: T:133's X and Y, T:1001's pan and tilt; 0, 0
 //! at the servos' middle, pan = (pos - 2047) * 360 / 4095, tilt = (2047 - pos) * 360 / 4095),
@@ -22,12 +31,40 @@
 //! whole, with one warning, the board reading on from the next newline; within one, a key whose value is not an array of finite
 //! numbers of the right length is ignored, and so are keys the board does not know. When the
 //! simulation disconnects the board returns to its own motor model and the link waits for the next.
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
-use std::time::Duration;
+use std::io::{BufRead, BufReader, Read};
+use std::sync::mpsc::SyncSender;
 use esp_soc::devices::{Icm20948Input, Ina219Shared};
 use esp_soc::json::{parse_json, Json};
-use super::ros_driver::{DriveShared, GimbalShared};
+use super::ros_driver::{Drive, DriveShared};
+
+/// The board sends a line every 10 ms of emulated time.
+pub const PERIOD_NS: u64 = 10_000_000;
+/// Board lines waiting for the link thread; while it is stuck on the socket, newer lines are dropped.
+pub const QUEUE: usize = 64;
+
+/// The board's end of the link: every `PERIOD_NS` of emulated time it stamps a line and queues it
+/// for the link thread, so the guest never waits on the socket.
+pub struct Link { tx: SyncSender<String>, hz: u64, period: u64, next: u64 }
+impl Link {
+    /// A link whose times are cycles of an `hz` clock, sending into `tx`.
+    pub fn new(tx: SyncSender<String>, hz: u64) -> Self {
+        let hz = hz.max(1);
+        let period = u64::try_from(u128::from(hz) * u128::from(PERIOD_NS) / 1_000_000_000).unwrap_or(u64::MAX).max(1);
+        Link { tx, hz, period, next: 0 }
+    }
+    /// When the next line is due (cycles).
+    pub fn next(&self) -> u64 { self.next }
+    /// Queues the line due by `cycle`, if one is, stamped with the latest boundary at or before it
+    /// (a boundary the board was not woken for is skipped, not sent late).
+    pub fn send_due(&mut self, cycle: u64, d: &Drive, pt: [f64; 2]) {
+        if cycle < self.next { return; }
+        let at = self.next + (cycle - self.next) / self.period * self.period;
+        let t = u64::try_from(u128::from(at) * 1_000_000_000 / u128::from(self.hz)).unwrap_or(u64::MAX);
+        // a full queue (the link thread stuck on the socket) or no link thread: the line is dropped
+        let _ = self.tx.try_send(line(t, d, pt));
+        self.next = at.saturating_add(self.period);
+    }
+}
 
 /// The longest line taken from the simulation: one of this protocol's is well under 1 KiB, and a
 /// peer that never sends a newline must not grow the emulator's memory (#388's socket board caps
@@ -97,18 +134,25 @@ pub fn apply(line: &str, drive: &DriveShared, imu: &Icm20948Input, battery: &Ina
     }
 }
 
-/// The board's line to the simulation.
-pub fn line(d: &super::ros_driver::Drive, pt: [f64; 2]) -> String {
-    format!("{{\"duty\":[{:.4},{:.4}],\"speed\":[{:.4},{:.4}],\"travel\":[{:.5},{:.5}],\"pt\":[{:.2},{:.2}],\"led\":[{:.3},{:.3}]}}\n",
+/// The board's line to the simulation at emulated time `t_ns`.
+pub fn line(t_ns: u64, d: &Drive, pt: [f64; 2]) -> String {
+    format!("{{\"t\":{t_ns},\"duty\":[{:.4},{:.4}],\"speed\":[{:.4},{:.4}],\"travel\":[{:.5},{:.5}],\"pt\":[{:.2},{:.2}],\"led\":[{:.3},{:.3}]}}\n",
             d.duty[0], d.duty[1], d.speed_mps[0], d.speed_mps[1], d.travel_m[0], d.travel_m[1], pt[0], pt[1], d.lights[0], d.lights[1])
 }
 
-/// Starts the link thread; it lives as long as the process.
-pub fn spawn(addr: String, drive: DriveShared, imu: Icm20948Input, battery: Ina219Shared, gimbal: GimbalShared) {
+/// Starts the link thread. It writes the lines the board queues on `rx` to the simulation (and
+/// drops them while none is connected), applies what comes back, and ends when the board is gone.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn(addr: String, rx: std::sync::mpsc::Receiver<String>, drive: DriveShared, imu: Icm20948Input, battery: Ina219Shared) {
+    use std::io::Write;
+    use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+    use std::time::Duration;
     std::thread::Builder::new().name("rover-sim".into()).spawn(move || {
         let mut said = false;
         loop {
-            let Ok(s) = TcpStream::connect(&addr) else {
+            // lines from while nobody listened are stale
+            loop { match rx.try_recv() { Ok(_) => {} Err(TryRecvError::Empty) => break, Err(TryRecvError::Disconnected) => return } }
+            let Ok(s) = std::net::TcpStream::connect(&addr) else {
                 if !said { eprintln!("[emu] ros-driver: waiting for the simulation at {addr}"); said = true; }
                 std::thread::sleep(Duration::from_millis(500));
                 continue;
@@ -117,20 +161,23 @@ pub fn spawn(addr: String, drive: DriveShared, imu: Icm20948Input, battery: Ina2
             let _ = s.set_nodelay(true);
             let Ok(reader) = s.try_clone() else { continue };
             let (d2, i2, b2) = (drive.clone(), imu.clone(), battery.clone());
-            let rx = std::thread::spawn(move || {
+            let peer = std::thread::spawn(move || {
                 read_lines(reader, LINE_MAX, |l| if let Ok(l) = std::str::from_utf8(l) { apply(l, &d2, &i2, &b2) });
             });
             let mut w = s;
-            while !rx.is_finished() {
-                let d = *drive.lock().unwrap_or_else(|e| e.into_inner());
-                let msg = line(&d, *gimbal.lock().unwrap_or_else(|e| e.into_inner()));
-                if w.write_all(msg.as_bytes()).is_err() { break; }
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            let board_gone = loop {
+                if peer.is_finished() { break false; }
+                match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(msg) => if w.write_all(msg.as_bytes()).is_err() { break false; },
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break true,
+                }
+            };
             let _ = w.shutdown(std::net::Shutdown::Both);
-            let _ = rx.join();
+            let _ = peer.join();
             drive.lock().unwrap_or_else(|e| e.into_inner()).external = false;
             eprintln!("[emu] ros-driver: simulation disconnected");
+            if board_gone { return; }
             said = false;
         }
     }).expect("spawn the rover-sim thread");
@@ -192,10 +239,33 @@ mod tests {
     }
 
     #[test]
+    fn lines_go_out_on_emulated_10_ms_boundaries_stamped_in_ns() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(QUEUE);
+        let hz = 240_000_000;
+        let mut link = Link::new(tx, hz);
+        let d = Drive::default();
+        let t = |rx: &std::sync::mpsc::Receiver<String>| rx.try_iter().map(|l| parse_json(&l).unwrap().get("t").and_then(Json::as_i64).unwrap()).collect::<Vec<_>>();
+        link.send_due(0, &d, [0.0; 2]);
+        assert_eq!(link.next(), hz / 100);
+        link.send_due(hz / 100 - 1, &d, [0.0; 2]);
+        assert_eq!(t(&rx), [0], "one line at 0, none before 10 ms");
+        link.send_due(hz / 100 + 7, &d, [0.0; 2]);
+        // woken late, past several boundaries: one line, at the latest, and the next on the grid
+        link.send_due(hz / 100 * 5 + 3, &d, [0.0; 2]);
+        assert_eq!(t(&rx), [10_000_000, 50_000_000]);
+        assert_eq!(link.next(), hz / 100 * 6);
+        // nobody draining: the queue fills and further lines are dropped, nothing blocks
+        for k in 6..6 + 2 * QUEUE as u64 { link.send_due(hz / 100 * k, &d, [0.0; 2]); }
+        assert_eq!(rx.try_iter().count(), QUEUE);
+        // a guest time far beyond any run does not overflow
+        link.send_due(u64::MAX, &d, [0.0; 2]);
+    }
+
+    #[test]
     fn the_board_line_carries_wheels_gimbal_and_lights() {
         let d = super::super::ros_driver::Drive { lights: [0.5, 1.0], ..Default::default() };
-        let l = line(&d, [44.923, -19.956]);
-        assert!(l.ends_with("}\n"));
+        let l = line(1_230_000_000, &d, [44.923, -19.956]);
+        assert!(l.starts_with("{\"t\":1230000000,") && l.ends_with("}\n"));
         let j = parse_json(&l).unwrap();
         assert_eq!(numbers(&j, "led", 2), Some(vec![0.5, 1.0]));
         assert_eq!(numbers(&j, "pt", 2), Some(vec![44.92, -19.96]));

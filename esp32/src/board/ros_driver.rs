@@ -30,7 +30,8 @@
 //! * 360 / 4095 degrees); `RosDriver::gimbal` holds the same two angles from the servos' shafts.
 //!
 //! `--board waveshare-ros-driver,sim=HOST:PORT` hands the wheel speeds, the IMU's motion, the
-//! battery and the gimbal's angles to a physics simulation over TCP (`rover_sim`).
+//! battery and the gimbal's angles to a physics simulation over TCP (`rover_sim`); the board sends
+//! its line every 10 ms of emulated time, stamped with that time.
 use std::sync::{Arc, Mutex};
 use esp_periph::i2c::I2cDevice;
 use esp_soc::board::{BoardEdge, BoardModel};
@@ -114,6 +115,8 @@ pub struct RosDriver {
     pub servos: St3215Bus,
     servo_now: u64,
     pub gimbal: GimbalShared,
+    /// The physics simulation's link (`sim=`): a line every 10 ms of emulated time.
+    link: Option<super::rover_sim::Link>,
 }
 impl Default for RosDriver { fn default() -> Self { Self::new() } }
 impl RosDriver {
@@ -128,6 +131,7 @@ impl RosDriver {
             imu: Icm20948Input::default(), motion: Default::default(),
             servos: St3215Bus::new(CPU_HZ, &[GIMBAL_PAN_ID, GIMBAL_TILT_ID]), servo_now: 0,
             gimbal: Arc::new(Mutex::new([0.0, 0.0])),
+            link: None,
         };
         // the gimbal powers up looking ahead (the firmware's 0, 0)
         for s in &mut b.servos.servos { s.place(2047.0); }
@@ -148,9 +152,17 @@ impl RosDriver {
     /// The board linked to a physics simulation at `addr` (see `rover_sim`).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_sim(addr: &str) -> Self {
-        let b = Self::new();
-        super::rover_sim::spawn(addr.to_string(), b.drive.clone(), b.imu.clone(), b.battery.clone(), b.gimbal.clone());
+        let mut b = Self::new();
+        let (tx, rx) = std::sync::mpsc::sync_channel(super::rover_sim::QUEUE);
+        b.link = Some(super::rover_sim::Link::new(tx, CPU_HZ));
+        super::rover_sim::spawn(addr.to_string(), rx, b.drive.clone(), b.imu.clone(), b.battery.clone());
         b
+    }
+    /// The simulation's line, when one is due by `cycle`.
+    fn send_due(&mut self, cycle: u64) {
+        let Some(link) = self.link.as_mut().filter(|l| cycle >= l.next()) else { return };
+        let d = *self.drive.lock().unwrap_or_else(|e| e.into_inner());
+        link.send_due(cycle, &d, *self.gimbal.lock().unwrap_or_else(|e| e.into_inner()));
     }
     fn level(&self, pin: u8) -> bool { self.output >> pin & 1 != 0 }
     /// Signed duty of wheel `i` now: the H-bridge inputs give the sign, the PWM the magnitude.
@@ -212,7 +224,7 @@ impl BoardModel for RosDriver {
         self.wheels.iter().flat_map(|w| { let (a, b) = Wheel::levels(w.phase); [(w.enc_a, a), (w.enc_b, b)] }).collect()
     }
     fn gpio_output_at(&mut self, _: u64, _: &[(u8, bool)], _enabled: u64, output: u64) { self.output = output; }
-    fn next_deadline(&self) -> Option<u64> { self.pending.first().map(|e| e.cycle).into_iter().chain(self.next_tick).chain(self.servos.next_due()).min() }
+    fn next_deadline(&self) -> Option<u64> { self.pending.first().map(|e| e.cycle).into_iter().chain(self.next_tick).chain(self.servos.next_due()).chain(self.link.as_ref().map(|l| l.next())).min() }
     fn uses_uart_pins(&self) -> bool { true }
     fn uart_tx(&mut self, cycle: u64, route: UartRoute, byte: u8) {
         let Some(baud) = route.baud.filter(|_| route.transmits_on(S_TXD)) else { return };
@@ -232,6 +244,7 @@ impl BoardModel for RosDriver {
         // the servos' shafts move on in millisecond steps (and at once when a packet reads them)
         if cycle >= self.servo_now.saturating_add(TICK) { self.advance_servos(cycle); }
         while let Some(at) = self.next_tick.filter(|&at| at <= cycle) { self.release(at); self.step(at); }
+        self.send_due(cycle);
         self.release(cycle);
         self.now = cycle;
     }

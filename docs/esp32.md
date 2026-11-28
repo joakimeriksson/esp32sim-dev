@@ -242,12 +242,23 @@ The firmware is GPL-3.0 and not part of this repository; build it unmodified wit
 `--board waveshare-ros-driver,sim=HOST:PORT` connects the board to a simulation over TCP,
 one JSON object per line. The board retries while nobody listens. While the link is up, the
 simulation owns the wheels, the IMU and the battery, and the board turns its numbers into
-encoder edges and I2C readings; the board tells it where the gimbal points. The run should be paced in real time: `--uart-tcp` already
-implies `--realtime`.
+encoder edges and I2C readings; the board tells it where the gimbal points.
+
+The protocol is provisional. Every line the board sends carries `"t"`, the emulated time in ns
+(as `--cooja` stamps its messages), and the board sends one every 10 ms of emulated time. What
+the simulation sends is applied when it arrives, at whatever emulated time that is, so `sim=`
+implies `--realtime`: the run goes at most at 1×, the rate a simulation integrating its own
+clock assumes (there is no flag to turn that off). A host too slow for real time still runs
+slower than 1×, and `"t"` tells the simulation by how much. A run with a simulation is
+therefore neither reproducible nor in lock-step with it. The plan is to move this link onto the
+socket session of [#388](https://github.com/mikroverk/esp32sim/pull/388) once that lands: the
+board's and the simulation's lines become message types there, and its `sync` with
+`quiet_until` set to the next 10 ms tick holds the guest in lock-step, which makes a run
+reproducible. A peer that ignores keys it does not know keeps working.
 
 | Direction | Message |
 | --- | --- |
-| Board to simulation, every 10 ms | `{"duty":[l,r],"speed":[l,r],"travel":[l,r],"pt":[pan,tilt],"led":[io4,io5]}`: the signed H-bridge duty (-1..1) per side, the speed (m/s) and travel (m) the encoders report, and the gimbal's present pan and tilt in degrees from the servos' shafts, in the firmware's convention (T:133's X and Y, T:1001's `pan`/`tilt`: 0, 0 at the servos' middle 2047; pan = (pos − 2047) · 360 / 4095, tilt = (2047 − pos) · 360 / 4095; T:133 limits Y to −30..90), and the two LED lights' brightness 0..1 (`led`: IO4 by the depth camera, IO5 by the USB camera; T:132 sets their PWM) |
+| Board to simulation, every 10 ms of emulated time | `{"t":ns,"duty":[l,r],"speed":[l,r],"travel":[l,r],"pt":[pan,tilt],"led":[io4,io5]}`: the emulated time in ns (a multiple of 10 ms), the signed H-bridge duty (-1..1) per side, the speed (m/s) and travel (m) the encoders report, and the gimbal's present pan and tilt in degrees from the servos' shafts, in the firmware's convention (T:133's X and Y, T:1001's `pan`/`tilt`: 0, 0 at the servos' middle 2047; pan = (pos − 2047) · 360 / 4095, tilt = (2047 − pos) · 360 / 4095; T:133 limits Y to −30..90), and the two LED lights' brightness 0..1 (`led`: IO4 by the depth camera, IO5 by the USB camera; T:132 sets their PWM) |
 | Simulation to board, any subset | `"speed":[l,r]` wheel surface speeds in m/s, replacing the built-in motor model. `"q":[w,x,y,z]`, `"w":[x,y,z]`, `"a":[x,y,z]`, `"mag":[x,y,z]` set the ICM-20948's pose: body to world, body angular rate in rad/s, world acceleration without gravity in m/s², world field in µT. `"bat":[volts,amps]` sets what the INA219 measures |
 
 A line that is not UTF-8 JSON is ignored; in one that is, a key whose value is not an array of
