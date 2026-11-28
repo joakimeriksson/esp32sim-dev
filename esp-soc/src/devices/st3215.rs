@@ -142,7 +142,14 @@ impl St3215 {
     pub fn speed(&self) -> f64 { self.speed }
     /// The goal position the servo is heading for (sign-magnitude decoded).
     pub fn goal(&self) -> f64 { from_sign_mag(self.word(reg::GOAL_POSITION), 15) }
-    pub fn moving(&self) -> bool { self.speed != 0.0 || (self.torque() && self.mode() == 0 && (self.goal_clamped() - self.pos).abs() >= 0.5) }
+    /// Whether the shaft turns or is about to: away from the goal in position mode, a goal speed in mode 1.
+    pub fn moving(&self) -> bool {
+        self.speed != 0.0 || (self.torque() && match self.mode() {
+            0 => (self.goal_clamped() - self.pos).abs() >= 0.5,
+            1 => self.word(reg::GOAL_SPEED) & 0x7fff != 0,
+            _ => false,
+        })
+    }
     fn mode(&self) -> u8 { self.regs[reg::MODE as usize] }
     pub fn reg(&self, a: u8) -> u8 { self.regs.get(a as usize).copied().unwrap_or(0) }
     fn goal_clamped(&self) -> f64 {
@@ -437,6 +444,27 @@ mod tests {
         s.write(reg::ACC, &[0, 0x00, 0x08, 0, 0, 0, 0]);
         s.advance(0.1);
         assert!((s.position_steps() - (3072.0 - 307.2)).abs() < 1.0);
+    }
+
+    #[test]
+    fn mode_1_turns_at_the_signed_goal_speed_from_rest_and_wraps() {
+        let mut s = St3215::new(1);
+        s.write(reg::MODE, &[1]);
+        assert!(!s.moving(), "no goal speed yet");
+        // -500 step/s (sign bit 15), no ramp: 1 s takes it 500 steps back, 5 s wraps past 0
+        s.write(reg::GOAL_SPEED, &(500u16 | 0x8000).to_le_bytes());
+        assert!(s.moving());
+        s.advance(1.0);
+        assert!((s.position_steps() - 1548.0).abs() < 1.0, "{}", s.position_steps());
+        assert_eq!(s.speed(), -500.0);
+        s.advance(4.0);
+        assert!((f64::from(s.position()) - (2048.0 - 2500.0 + 4096.0)).abs() <= 1.0, "{}", s.position());
+        // goal speed 0 stops it where it is
+        s.write(reg::GOAL_SPEED, &[0, 0]);
+        s.advance(0.01);
+        let p = s.position();
+        s.advance(1.0);
+        assert_eq!((s.position(), s.speed(), s.moving()), (p, 0.0, false));
     }
 
     #[test]
