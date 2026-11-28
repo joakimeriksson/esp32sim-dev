@@ -18,38 +18,40 @@
 //!   magnetic field (uT), as `Icm20948Input` takes them.
 //! - `"bat":[volts,amps]`: what the INA219 measures.
 //!
-//! Values that are not finite numbers, or arrays of the wrong length, are ignored. When the
+//! A line that is not JSON is ignored; within one, a key whose value is not an array of finite
+//! numbers of the right length is ignored, and so are keys the board does not know. When the
 //! simulation disconnects the board returns to its own motor model and the link waits for the next.
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 use esp_soc::devices::{Icm20948Input, Ina219Shared};
+use esp_soc::json::{parse_json, Json};
 use super::ros_driver::{DriveShared, GimbalShared};
 
-/// The numbers of `"key":[...]` in a flat JSON line, if it holds exactly `n` finite ones.
-pub fn numbers(line: &str, key: &str, n: usize) -> Option<Vec<f64>> {
-    let at = line.find(&format!("\"{key}\""))? + key.len() + 2;
-    let rest = line[at..].trim_start().strip_prefix(':')?.trim_start().strip_prefix('[')?;
-    let body = &rest[..rest.find(']')?];
-    let v: Vec<f64> = body.split(',').map(|s| s.trim().parse::<f64>()).collect::<Result<_, _>>().ok()?;
+/// The numbers of `"key":[...]` in a parsed line, if it holds exactly `n` finite ones.
+pub fn numbers(line: &Json, key: &str, n: usize) -> Option<Vec<f64>> {
+    let v: Vec<f64> = line.get(key)?.as_arr()?.iter().map(Json::as_f64).collect::<Option<_>>()?;
     (v.len() == n && v.iter().all(|x| x.is_finite())).then_some(v)
 }
 
-/// Applies one line from the simulation to the board's shared state.
+/// Applies one line from the simulation to the board's shared state. A line that is not a JSON
+/// object is ignored whole; in one that is, each key whose value is not an array of `n` finite
+/// numbers is ignored.
 pub fn apply(line: &str, drive: &DriveShared, imu: &Icm20948Input, battery: &Ina219Shared) {
-    if let Some(s) = numbers(line, "speed", 2) {
+    let Ok(j) = parse_json(line) else { return };
+    if let Some(s) = numbers(&j, "speed", 2) {
         let mut d = drive.lock().unwrap_or_else(|e| e.into_inner());
         d.speed_mps = [s[0].clamp(-10.0, 10.0), s[1].clamp(-10.0, 10.0)];
         d.external = true;
     }
-    if let Some(q) = numbers(line, "q", 4) {
+    if let Some(q) = numbers(&j, "q", 4) {
         let n = q.iter().map(|x| x * x).sum::<f64>().sqrt();
         if n > 1e-9 { imu.set_orientation([q[0] / n, q[1] / n, q[2] / n, q[3] / n]); }
     }
-    if let Some(w) = numbers(line, "w", 3) { imu.set_angular_rate([w[0], w[1], w[2]]); }
-    if let Some(a) = numbers(line, "a", 3) { imu.set_linear_accel([a[0], a[1], a[2]]); }
-    if let Some(m) = numbers(line, "mag", 3) { imu.set_mag_field([m[0], m[1], m[2]]); }
-    if let Some(b) = numbers(line, "bat", 2) {
+    if let Some(w) = numbers(&j, "w", 3) { imu.set_angular_rate([w[0], w[1], w[2]]); }
+    if let Some(a) = numbers(&j, "a", 3) { imu.set_linear_accel([a[0], a[1], a[2]]); }
+    if let Some(m) = numbers(&j, "mag", 3) { imu.set_mag_field([m[0], m[1], m[2]]); }
+    if let Some(b) = numbers(&j, "bat", 2) {
         let mut i = battery.lock().unwrap_or_else(|e| e.into_inner());
         i.bus_v = b[0].clamp(0.0, 32.0);
         i.current_a = b[1].clamp(-50.0, 50.0);
@@ -117,21 +119,28 @@ mod tests {
         let b = *bat.lock().unwrap();
         assert_eq!((b.bus_v, b.current_a), (11.1, 2.5));
         // wrong lengths, non-numbers, missing brackets: no change, no panic
-        apply(r#"{"speed":[1],"w":[0,0,"x"],"a":[1e999,0,0],"q":[0,0,0,0],"bat":5}"#, &drive, &imu, &bat);
+        apply(r#"{"speed":[1],"w":[0,0,"x"],"a":[1,0],"q":[0,0,0,0],"bat":5}"#, &drive, &imu, &bat);
+        // not JSON (an out-of-range number, a cut line, a key inside a string): the whole line is ignored
+        apply(r#"{"speed":[2,2],"a":[1e999,0,0]}"#, &drive, &imu, &bat);
+        apply(r#"{"speed":[2,2],"w":[1,1,1]"#, &drive, &imu, &bat);
+        apply(r#"{"src":"\"speed\":[3,3]"}"#, &drive, &imu, &bat);
         assert_eq!(drive.lock().unwrap().speed_mps, [0.25, -0.5]);
         assert_eq!(imu.get().angular_rate, [0.0, 0.0, 1.5]);
         assert_eq!(imu.get().linear_accel, [0.0; 3]);
         assert_eq!(imu.get().orientation, [0.0, 0.0, 0.0, 1.0]);
-        assert_eq!(numbers(r#"{"a" : [ 1, 2.5 ,-3 ]}"#, "a", 3), Some(vec![1.0, 2.5, -3.0]));
+        // a key's name inside another key's string value does not hide the key itself
+        apply(r#"{"src":"a","a" : [ 1, 2.5 ,-3 ]}"#, &drive, &imu, &bat);
+        assert_eq!(imu.get().linear_accel, [1.0, 2.5, -3.0]);
     }
 
     #[test]
     fn the_board_line_carries_wheels_gimbal_and_lights() {
         let d = super::super::ros_driver::Drive { lights: [0.5, 1.0], ..Default::default() };
         let l = line(&d, [44.923, -19.956]);
-        assert_eq!(numbers(&l, "led", 2), Some(vec![0.5, 1.0]));
-        assert_eq!(numbers(&l, "pt", 2), Some(vec![44.92, -19.96]));
-        assert_eq!(numbers(&l, "travel", 2), Some(vec![0.0, 0.0]));
         assert!(l.ends_with("}\n"));
+        let j = parse_json(&l).unwrap();
+        assert_eq!(numbers(&j, "led", 2), Some(vec![0.5, 1.0]));
+        assert_eq!(numbers(&j, "pt", 2), Some(vec![44.92, -19.96]));
+        assert_eq!(numbers(&j, "travel", 2), Some(vec![0.0, 0.0]));
     }
 }
