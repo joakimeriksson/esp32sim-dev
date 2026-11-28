@@ -42,6 +42,9 @@ The default board option also selects the bare module for this chip.
 `ttgo-tdisplay` (alias `tdisplay`) is the LilyGO TTGO T-Display, see below.
 `ulanzi-tc001` (alias `tc001`) is the Ulanzi TC001 pixel clock, a 32×8 WS2812 matrix on RMT
 ([boards.md](boards.md#ulanzi-tc001--ulanzi-tc001-pixel-clock-classic-esp32)).
+`cyd` (alias `esp32-2432s028`) and `ai-thinker-cam` (alias `esp32cam`) are described below.
+`waveshare-ros-driver` (aliases `ros-driver`, `ugv-rover`) is the Waveshare UGV Rover's ROS Driver
+for Robots, see below; `waveshare-ros-driver,sim=HOST:PORT` links it to a physics simulation.
 WASM accepts the `esp32` chip identifier. Boot applications through ROM.
 
 T0/T1 and LACT use 64-bit counters and the shared timer stepping logic.

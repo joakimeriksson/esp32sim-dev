@@ -25,7 +25,8 @@ fn help(chip: &str, code: i32) -> ! {
     eprintln!("                        (Espressif's, not in the tarball: tools/fetch-rom-elfs.sh DIR downloads all of them)");
     eprintln!("  --board NAME          board model (S3: atech14, waveshare-lcd4b, waveshare-amoled18-v2, waveshare-cam, stopwatch, none;");
     eprintln!("                        C6: waveshare-c6-lcd147, xiao-esp32c6, none; P4: waveshare-p4-lcd35, none; S31: mosaico, none;");
-    eprintln!("                        classic: ttgo-tdisplay, cyd, ulanzi-tc001, ai-thinker-cam, esp32dev, none)");
+    eprintln!("                        classic: ttgo-tdisplay, cyd, ulanzi-tc001, ai-thinker-cam, waveshare-ros-driver, esp32dev, none;");
+    eprintln!("                        waveshare-ros-driver,sim=HOST:PORT links a physics simulation and implies --realtime)");
     eprintln!("  --device SPEC         (S3) with --board custom, wire one device onto the bare module; repeatable.");
     eprintln!("                        Each bus takes only its real wiring, the trailing field being the model:");
     eprintln!("                        I2C     BUS:ADDR:MODEL   bmp280, bmi270, bmm150, ft5x06, aht20, lsm6ds3, sh1106");
@@ -718,9 +719,10 @@ fn setup_esp32(o: &Opts) -> esp32::Machine {
     m.bus.set_flash_size(o.flash_mb.unwrap_or(4) << 20);
     if !o.debug.is_empty() { let mut f = esp_soc::DebugFlags::from_env(); for d in &o.debug { f.parse(d); } m.set_debug(&f); }
     let board = if o.board == "atech14" { "none" } else { &o.board };
-    m.bus.board = esp32::board::make_board(board).unwrap_or_else(|| usage_error(&format!("unknown classic ESP32 board '{board}' (none, bare, esp32dev, ttgo-tdisplay, cyd, ai-thinker-cam, ulanzi-tc001)")));
+    let sim = esp32::board::sim_addr(board).unwrap_or_else(|e| usage_error(&format!("--board {board}: {e}")));
+    m.bus.board = esp32::board::make_board(board).unwrap_or_else(|| usage_error(&format!("unknown classic ESP32 board '{board}' (none, bare, esp32dev, ttgo-tdisplay, cyd, ai-thinker-cam, ulanzi-tc001, waveshare-ros-driver)")));
     // a physics simulation integrates its own clock: hold the run to 1x, as --uart-tcp does
-    if esp32::board::sim_addr(board).is_ok_and(|a| a.is_some()) { m.rt.enabled = true; }
+    if sim.is_some() { m.rt.enabled = true; }
     m.bus.attach_board_devices();
     set_camera_image(&mut m.bus.board, o.cam_image.as_deref());
     let net_log = m.bus.debug.has("net");

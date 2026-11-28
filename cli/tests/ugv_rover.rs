@@ -22,6 +22,28 @@ fn field(line: &str, key: &str) -> Option<f64> {
     line.split(&format!("\"{key}\":")).nth(1).and_then(|v| v.split([',', '}']).next()).and_then(|v| v.parse::<f64>().ok())
 }
 
+/// esp32sim's exit status and stderr for `args`.
+fn cli(args: &[&str]) -> (Option<i32>, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_esp32sim")).args(args).output().expect("run esp32sim");
+    (out.status.code(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+#[test]
+fn the_board_is_listed_and_a_bad_sim_option_says_what_is_wrong() {
+    let (code, help) = cli(&["--help"]);
+    assert_eq!(code, Some(0));
+    assert!(help.contains("waveshare-ros-driver,sim=HOST:PORT"), "{help}");
+    let (code, err) = cli(&["--chip", "esp32", "--board", "unknown"]);
+    assert_eq!(code, Some(2));
+    assert!(err.contains("waveshare-ros-driver"), "{err}");
+    let (code, err) = cli(&["--chip", "esp32", "--board", "waveshare-ros-driver,sim=host-without-port"]);
+    assert_eq!(code, Some(2));
+    assert!(err.contains("--board waveshare-ros-driver,sim=host-without-port: sim=host-without-port: expected HOST:PORT") && !err.contains("unknown classic"), "{err}");
+    let (code, err) = cli(&["--chip", "esp32", "--board", "ttgo-tdisplay,sim=127.0.0.1:5"]);
+    assert_eq!(code, Some(2));
+    assert!(err.contains("'ttgo-tdisplay' takes no options"), "{err}");
+}
+
 /// Waveshare's ugv_base_ros firmware (waveshareteam/ugv_base_ros at 2e7df97, GPL-3.0, built
 /// unmodified with PlatformIO: bootloader.bin, partitions.bin, firmware.bin) on the
 /// `waveshare-ros-driver` board. Not redistributed here.
