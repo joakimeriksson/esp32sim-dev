@@ -144,6 +144,39 @@ mod tests {
     }
 
     #[test]
+    fn vertical_addressing_runs_down_the_page_window() {
+        let state: Ssd1306Shared = Default::default();
+        let mut d = Ssd1306::new(state.clone());
+        // vertical mode, columns 4..127, pages 0..1: page 0, page 1, then the next column
+        send(&mut d, &[0x00, 0x20, 0x01, 0x21, 0x04, 0x7f, 0x22, 0x00, 0x01]);
+        send(&mut d, &[0x40, 1, 2, 3]);
+        let s = state.lock().unwrap();
+        assert_eq!((s.gram[0][4], s.gram[1][4], s.gram[0][5], s.gram[0][6]), (1, 2, 3, 0));
+    }
+
+    #[test]
+    fn invert_start_line_and_segment_remap_change_what_the_glass_shows() {
+        let state: Ssd1306Shared = Default::default();
+        let mut d = Ssd1306::new(state.clone());
+        let lit = |state: &Ssd1306Shared| -> Vec<usize> { state.lock().unwrap().rgb565(128).iter().enumerate().filter(|(_, &p)| p != 0).map(|(i, _)| i).collect() };
+        // on, upright (A1h, C8h); GDDRAM page 0 column 0 bit 1: row 1, column 0
+        send(&mut d, &[0x00, 0xaf, 0xa1, 0xc8]);
+        send(&mut d, &[0x40, 0x02]);
+        assert_eq!(lit(&state), [128]);
+        // start line 1: GDDRAM row 1 shows on the glass's top row
+        send(&mut d, &[0x00, 0x41]);
+        assert_eq!(lit(&state), [0]);
+        // start line 0 and A0h: column 0 shows at the right edge
+        send(&mut d, &[0x00, 0x40, 0xa0]);
+        assert_eq!(lit(&state), [128 + 127]);
+        // A1h again, then A7h: every pixel but that one lit
+        send(&mut d, &[0x00, 0xa1, 0xa7]);
+        let l = lit(&state);
+        assert_eq!(l.len(), 128 * 64 - 1);
+        assert!(!l.contains(&128));
+    }
+
+    #[test]
     fn single_control_bytes_and_page_mode() {
         let state: Ssd1306Shared = Default::default();
         let mut d = Ssd1306::new(state.clone());

@@ -548,6 +548,49 @@ mod tests {
     }
 
     #[test]
+    fn power_management_2_disables_accel_and_gyro_readings() {
+        let mut d = Icm20948::new(Arc::default(), 1_000_000);
+        d.input().set_angular_rate([1.0, 0.0, 0.0]);
+        let read = |d: &mut Icm20948| { let v = rd(d, ACCEL_XOUT_H, 12); [i16::from_be_bytes([v[4], v[5]]), i16::from_be_bytes([v[6], v[7]])] };
+        bank(&mut d, 0);
+        assert_eq!(read(&mut d), [16384, 7506], "+1 g on z; 1 rad/s at the reset +-250 dps");
+        wr(&mut d, PWR_MGMT_2, &[0x38]);
+        assert_eq!(read(&mut d), [0, 7506], "accel off");
+        wr(&mut d, PWR_MGMT_2, &[0x07]);
+        assert_eq!(read(&mut d), [16384, 0], "gyro off");
+    }
+
+    #[test]
+    fn the_dmp_sleeps_with_the_chip_and_fifo_counth_latches_countl() {
+        let motion = Arc::new(ImuMotion::default());
+        let mut d = Icm20948::new(motion.clone(), 1_000_000);
+        // Quat9 on every sample at 55 Hz: 18-byte packets; DMP and FIFO on, but the chip asleep (reset)
+        bank(&mut d, 2);
+        wr(&mut d, GYRO_SMPLRT_DIV, &[19]);
+        mems_write(&mut d, DATA_OUT_CTL1, &[0x04, 0x00]);
+        wr(&mut d, USER_CTRL, &[0xc0]);
+        let period = 1_000_000 * 20 / 1100;
+        for t in [10, 15] {
+            motion.cycle.store(t * period, Relaxed);
+            assert_eq!(rd(&mut d, FIFO_COUNTH, 2), [0, 0], "asleep: no samples");
+        }
+        // awake: the sample clock starts at the next read, one packet a period after it
+        wr(&mut d, PWR_MGMT_1, &[0x01]);
+        assert_eq!(rd(&mut d, FIFO_COUNTH, 2), [0, 0]);
+        motion.cycle.store(25 * period + 1, Relaxed);
+        let n = u16::from_be_bytes(rd(&mut d, FIFO_COUNTH, 2).try_into().unwrap());
+        assert_eq!(n, 10 * 18);
+        // COUNTH latches the count; COUNTL read later gives the latched low byte, not the newer count
+        motion.cycle.store(30 * period + 1, Relaxed);
+        let hi = rd(&mut d, FIFO_COUNTH, 1)[0];
+        motion.cycle.store(32 * period + 1, Relaxed);
+        let lo = rd(&mut d, FIFO_COUNTL, 1)[0];
+        let latched = u16::from_be_bytes([hi, lo]);
+        assert_eq!(latched, n + 5 * 18);
+        assert_eq!(u16::from_be_bytes(rd(&mut d, FIFO_COUNTH, 2).try_into().unwrap()), latched + 2 * 18);
+    }
+
+    #[test]
     fn dmp_fifo_packets() {
         let motion = Arc::new(ImuMotion::default());
         let mut d = Icm20948::new(motion.clone(), 1_000_000);

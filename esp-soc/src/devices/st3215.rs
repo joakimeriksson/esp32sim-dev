@@ -468,6 +468,43 @@ mod tests {
     }
 
     #[test]
+    fn read_only_registers_broadcast_read_and_sync_read() {
+        let mut bus = St3215Bus::new(HZ, &[1, 2]);
+        // the model number cannot be written (nor the present values, which a read refreshes anyway)
+        send(&mut bus, 0, &packet(1, inst::WRITE, &[reg::MODEL_L, 1, 2]));
+        assert_eq!(answers(&mut bus, 10_000), packet(1, 0, &[]));
+        send(&mut bus, 10_000, &packet(1, inst::READ, &[reg::MODEL_L, 2]));
+        assert_eq!(answers(&mut bus, 20_000), packet(1, 0, &777u16.to_le_bytes()));
+        // a broadcast READ is not answered: every servo would talk at once
+        send(&mut bus, 20_000, &packet(BROADCAST, inst::READ, &[reg::ID, 1]));
+        assert!(answers(&mut bus, 30_000).is_empty());
+        // SYNC_READ: each listed servo answers, in the order listed, and nothing is written
+        send(&mut bus, 30_000, &packet(BROADCAST, inst::SYNC_READ, &[reg::ID, 1, 2, 1, 9]));
+        assert_eq!(answers(&mut bus, 40_000), [packet(2, 0, &[2]), packet(1, 0, &[1])].concat());
+        assert!(bus.servo(2).is_some() && bus.servo(1).is_some());
+    }
+
+    #[test]
+    fn goal_time_sets_the_speed_and_angle_limits_clamp_the_goal() {
+        // goal 3048, 1000 steps away, in 1000 ms with goal speed 0 and no ramp: 1000 step/s
+        let mut s = St3215::new(1);
+        s.write(reg::ACC, &[0, 0xe8, 0x0b, 0xe8, 0x03, 0, 0]);
+        s.advance(0.5);
+        assert!((s.position_steps() - 2548.0).abs() < 2.0, "{}", s.position_steps());
+        s.advance(1.0);
+        assert_eq!(s.position(), 3048);
+        // angle limits 1000..3000: a goal past either end stops at it
+        let mut s = St3215::new(1);
+        s.write(reg::MIN_ANGLE, &[0xe8, 0x03, 0xb8, 0x0b]);
+        s.write(reg::GOAL_POSITION, &3500u16.to_le_bytes());
+        s.advance(3.0);
+        assert_eq!(s.position(), 3000);
+        s.write(reg::GOAL_POSITION, &500u16.to_le_bytes());
+        s.advance(3.0);
+        assert_eq!(s.position(), 1000);
+    }
+
+    #[test]
     fn torque_off_stops_the_move_and_reg_write_waits_for_action() {
         let mut bus = St3215Bus::new(HZ, &[1]);
         send(&mut bus, 0, &packet(1, inst::WRITE, &[reg::ACC, 0, 0x00, 0x0c, 0, 0, 0xf4, 0x01]));   // 3072 at 500 step/s

@@ -102,6 +102,12 @@ mod tests {
         input.lock().unwrap().current_a = 100.0;
         set(&mut d, 0, 0x0000);   // PGA /1: 40 mV
         assert_eq!(reg(&mut d, 1), 4000, "clamped to the PGA range");
+        // BRNG (bit 13): 20 V reads as 20 V on the 32 V range, at the 16 V full scale on the 16 V one
+        input.lock().unwrap().bus_v = 20.0;
+        set(&mut d, 0, 0x399f);
+        assert_eq!(reg(&mut d, 2), (5000 << 3) | 2);
+        set(&mut d, 0, 0x199f);
+        assert_eq!(reg(&mut d, 2), (4000 << 3) | 2);
         set(&mut d, 0, 0x8000);
         assert_eq!((reg(&mut d, 0), reg(&mut d, 5)), (0x399f, 0), "RST restores the defaults");
     }
