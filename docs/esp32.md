@@ -250,7 +250,11 @@ implies `--realtime`.
 | Board to simulation, every 10 ms | `{"duty":[l,r],"speed":[l,r],"travel":[l,r],"pt":[pan,tilt],"led":[io4,io5]}`: the signed H-bridge duty (-1..1) per side, the speed (m/s) and travel (m) the encoders report, and the gimbal's present pan and tilt in degrees from the servos' shafts, in the firmware's convention (T:133's X and Y, T:1001's `pan`/`tilt`: 0, 0 at the servos' middle 2047; pan = (pos − 2047) · 360 / 4095, tilt = (2047 − pos) · 360 / 4095; T:133 limits Y to −30..90), and the two LED lights' brightness 0..1 (`led`: IO4 by the depth camera, IO5 by the USB camera; T:132 sets their PWM) |
 | Simulation to board, any subset | `"speed":[l,r]` wheel surface speeds in m/s, replacing the built-in motor model. `"q":[w,x,y,z]`, `"w":[x,y,z]`, `"a":[x,y,z]`, `"mag":[x,y,z]` set the ICM-20948's pose: body to world, body angular rate in rad/s, world acceleration without gravity in m/s², world field in µT. `"bat":[volts,amps]` sets what the INA219 measures |
 
-Values that are not finite numbers, and arrays of the wrong length, are ignored. When the
+A line that is not UTF-8 JSON is ignored; in one that is, a key whose value is not an array of
+finite numbers of the right length is ignored, and so are keys the board does not know. A line
+longer than 64 KiB (`rover_sim::LINE_MAX`; this protocol's lines are well under 1 KiB) is dropped
+whole, with one warning, and the board reads on from the next newline, so a peer that never sends
+one cannot grow the emulator's memory. When the
 simulation disconnects, the board goes back to its own motor model. The link is native only:
 the browser build has no sockets. `esp32/src/board/rover_sim.rs` has the details.
 

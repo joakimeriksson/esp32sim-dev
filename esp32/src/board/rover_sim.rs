@@ -18,15 +18,54 @@
 //!   magnetic field (uT), as `Icm20948Input` takes them.
 //! - `"bat":[volts,amps]`: what the INA219 measures.
 //!
-//! A line that is not JSON is ignored; within one, a key whose value is not an array of finite
+//! A line that is not UTF-8 JSON is ignored, and one longer than `LINE_MAX` (64 KiB) is dropped
+//! whole, with one warning, the board reading on from the next newline; within one, a key whose value is not an array of finite
 //! numbers of the right length is ignored, and so are keys the board does not know. When the
 //! simulation disconnects the board returns to its own motor model and the link waits for the next.
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 use esp_soc::devices::{Icm20948Input, Ina219Shared};
 use esp_soc::json::{parse_json, Json};
 use super::ros_driver::{DriveShared, GimbalShared};
+
+/// The longest line taken from the simulation: one of this protocol's is well under 1 KiB, and a
+/// peer that never sends a newline must not grow the emulator's memory (#388's socket board caps
+/// its lines the same way).
+pub const LINE_MAX: usize = 64 << 10;
+
+/// Hands each line of `r` (without its newline) to `each` until the stream ends or fails. A line
+/// longer than `max` bytes is dropped whole: the reader keeps at most `max` bytes, skips to the
+/// next newline and goes on from there, and the first such line is reported once. Returns how
+/// many lines were dropped.
+pub fn read_lines(r: impl Read, max: usize, mut each: impl FnMut(&[u8])) -> usize {
+    let mut r = BufReader::new(r);
+    let (mut line, mut skipping, mut dropped) = (Vec::new(), false, 0);
+    loop {
+        let buf = match r.fill_buf() {
+            Ok([]) => return dropped,
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return dropped,
+        };
+        let end = buf.iter().position(|&b| b == b'\n');
+        let chunk = &buf[..end.unwrap_or(buf.len())];
+        if !skipping && line.len() + chunk.len() > max {
+            skipping = true;
+            line.clear();
+            if dropped == 0 { eprintln!("[emu] ros-driver: dropped a line from the simulation longer than {max} bytes (reported once)"); }
+            dropped += 1;
+        }
+        if !skipping { line.extend_from_slice(chunk); }
+        let used = end.map_or(buf.len(), |e| e + 1);
+        r.consume(used);
+        if end.is_some() {
+            if !skipping { each(&line); }
+            line.clear();
+            skipping = false;
+        }
+    }
+}
 
 /// The numbers of `"key":[...]` in a parsed line, if it holds exactly `n` finite ones.
 pub fn numbers(line: &Json, key: &str, n: usize) -> Option<Vec<f64>> {
@@ -79,10 +118,7 @@ pub fn spawn(addr: String, drive: DriveShared, imu: Icm20948Input, battery: Ina2
             let Ok(reader) = s.try_clone() else { continue };
             let (d2, i2, b2) = (drive.clone(), imu.clone(), battery.clone());
             let rx = std::thread::spawn(move || {
-                for line in BufReader::new(reader).lines() {
-                    let Ok(line) = line else { break };
-                    apply(&line, &d2, &i2, &b2);
-                }
+                read_lines(reader, LINE_MAX, |l| if let Ok(l) = std::str::from_utf8(l) { apply(l, &d2, &i2, &b2) });
             });
             let mut w = s;
             while !rx.is_finished() {
@@ -131,6 +167,28 @@ mod tests {
         // a key's name inside another key's string value does not hide the key itself
         apply(r#"{"src":"a","a" : [ 1, 2.5 ,-3 ]}"#, &drive, &imu, &bat);
         assert_eq!(imu.get().linear_accel, [1.0, 2.5, -3.0]);
+    }
+
+    #[test]
+    fn an_overlong_line_is_dropped_whole_and_reading_goes_on() {
+        // 8 MiB without a newline, then a good line: only the good line arrives, and the reader
+        // never holds more than the cap (it would otherwise grow one 8 MiB line)
+        let flood = std::io::repeat(b'x').take(8 << 20);
+        let rest = std::io::Cursor::new(&b"\n{\"speed\":[1,1]}\nshort\n\xff\xfe\n"[..]);
+        let mut got = Vec::new();
+        let dropped = read_lines(flood.chain(rest), LINE_MAX, |l| got.push(l.to_vec()));
+        assert_eq!(dropped, 1);
+        assert_eq!(got, [b"{\"speed\":[1,1]}".to_vec(), b"short".to_vec(), vec![0xff, 0xfe]]);
+        // exactly the cap is kept; one byte more is not
+        let mut sizes = Vec::new();
+        let text = [vec![b'a'; 16], vec![b'\n'], vec![b'b'; 17], vec![b'\n'], vec![b'c'; 3]].concat();
+        assert_eq!(read_lines(&text[..], 16, |l| sizes.push(l.len())), 1);
+        assert_eq!(sizes, [16], "the unterminated tail at the end of the stream is not a line");
+        // a non-UTF-8 line applies nothing and does not end the link
+        let drive: DriveShared = Default::default();
+        let (imu, bat) = (Icm20948Input::default(), Arc::new(Mutex::new(Ina219Input { bus_v: 11.8, current_a: 0.25, shunt_ohm: 0.01 })));
+        read_lines(&b"\xff{\"speed\":[2,2]}\n{\"speed\":[1,1]}\n"[..], LINE_MAX, |l| if let Ok(l) = std::str::from_utf8(l) { apply(l, &drive, &imu, &bat) });
+        assert_eq!(drive.lock().unwrap().speed_mps, [1.0, 1.0]);
     }
 
     #[test]
