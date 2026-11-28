@@ -65,8 +65,12 @@ pub mod inst {
 
 /// The packet checksum: the inverted low byte of the sum of `bytes` (ID through the last parameter).
 pub fn checksum(bytes: &[u8]) -> u8 { !bytes.iter().fold(0u8, |s, &b| s.wrapping_add(b)) }
+/// The most parameter bytes a packet carries: LEN is one byte and counts them plus 2.
+pub const MAX_PARAMS: usize = 253;
 /// A complete packet: header, `id`, length, `op` (instruction or error byte), `params`, checksum.
+/// Parameters past `MAX_PARAMS` do not fit the LEN byte and are left out.
 pub fn packet(id: u8, op: u8, params: &[u8]) -> Vec<u8> {
+    let params = &params[..params.len().min(MAX_PARAMS)];
     let mut p = vec![0xff, 0xff, id, (params.len() + 2) as u8, op];
     p.extend_from_slice(params);
     p.push(checksum(&p[2..]));
@@ -158,10 +162,11 @@ impl St3215 {
         self.regs[reg::MOVING as usize] = u8::from(self.moving());
         self.set_word(reg::PRESENT_CURRENT, 0);
     }
-    /// `n` bytes from `addr` (zeros past the table), as READ answers them.
+    /// `n` bytes from `addr` (zeros past the table), as READ answers them: at most `MAX_PARAMS`,
+    /// what one answer's LEN byte can count.
     pub fn read(&mut self, addr: u8, n: u8) -> Vec<u8> {
         self.refresh();
-        (0..n as usize).map(|i| self.regs.get(addr as usize + i).copied().unwrap_or(0)).collect()
+        (0..usize::from(n).min(MAX_PARAMS)).map(|i| self.regs.get(addr as usize + i).copied().unwrap_or(0)).collect()
     }
     /// A WRITE (or the ACTION of a REG_WRITE): bytes into the table, then their effects.
     pub fn write(&mut self, addr: u8, data: &[u8]) {
@@ -475,5 +480,13 @@ mod tests {
         // the wrong line rate is not heard
         for b in packet(1, inst::PING, &[]) { bus.receive(70_000, 115_200, b); }
         assert!(answers(&mut bus, 100_000).is_empty());
+        // READ 254 and 255 bytes: the answer's LEN cannot count them; it carries 253 with LEN 255
+        for n in [254, 255] {
+            send(&mut bus, 110_000, &packet(1, inst::READ, &[0, n]));
+            let a = answers(&mut bus, 130_000);
+            assert_eq!((a.len(), a[3]), (4 + MAX_PARAMS + 2, 255), "READ {n}");
+            assert_eq!(*a.last().unwrap(), checksum(&a[2..a.len() - 1]));
+        }
+        assert_eq!(packet(1, 0, &[0; 300]).len(), 4 + MAX_PARAMS + 2);
     }
 }
