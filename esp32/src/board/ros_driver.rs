@@ -361,6 +361,80 @@ mod tests {
     }
 
     #[test]
+    fn external_speeds_turn_into_encoder_edges() {
+        let mut b = RosDriver::new();
+        { let mut d = b.drive.lock().unwrap(); d.external = true; d.speed_mps = [0.5, -0.25]; }
+        // the H-bridges off: the simulation alone moves the wheels
+        let edges = run(&mut b, 0, 0, CPU_HZ);
+        let d = *b.drive.lock().unwrap();
+        assert!((d.travel_m[0] - 0.5).abs() < 0.002 && (d.travel_m[1] + 0.25).abs() < 0.002, "{d:?}");
+        // halfQuad: COUNTS_PER_TURN edges on A per turn
+        let a_edges = edges.iter().filter(|e| e.pin == 35).count() as f64;
+        assert!((a_edges - 0.5 / (std::f64::consts::PI * WHEEL_D) * COUNTS_PER_TURN).abs() < 3.0, "{a_edges}");
+        assert!(edges.iter().any(|e| e.pin == 27));
+    }
+
+    #[test]
+    fn the_lights_follow_the_ledc_duty_or_the_pin_level() {
+        let mut b = RosDriver::new();
+        b.gpio_output_at(0, &[], 1 << IO5, 1 << IO5);
+        b.advance_inputs_with_clock(100, &|pin| if pin == IO4 { Some((5000.0, 16384)) } else { None });
+        let l = b.drive.lock().unwrap().lights;
+        assert!((l[0] - 0.25).abs() < 1e-4 && l[1] == 1.0, "{l:?}");
+    }
+
+    #[test]
+    fn the_imu_pose_handle_outlives_a_guest_reset() {
+        let mut b = RosDriver::new();
+        let _first = b.i2c_devices();
+        // what the sim link writes: rolled 90 degrees about x
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        b.imu.set_orientation([h, h, 0.0, 0.0]);
+        // a guest reset attaches fresh chips; the new ICM-20948 reads the same handle
+        let mut icm = b.i2c_devices().into_iter().find(|d| d.1 == ICM20948_ADDRESS).unwrap().2;
+        icm.start(false); icm.write(0x2d); icm.start(true);
+        let v: Vec<u8> = (0..6).map(|_| icm.read()).collect();
+        icm.stop();
+        assert_eq!([i16::from_be_bytes([v[2], v[3]]), i16::from_be_bytes([v[4], v[5]])], [16384, 0], "gravity along +y");
+    }
+
+    #[test]
+    fn the_sim_link_over_tcp_stamps_lines_and_sets_then_clears_the_external_speeds() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::time::{Duration, Instant};
+        use esp_soc::json::{parse_json, Json};
+        let limit = Duration::from_secs(20);
+        let wait = |what: &str, done: &dyn Fn() -> bool| {
+            let t = Instant::now();
+            while !done() { assert!(t.elapsed() < limit, "timed out waiting for {what}"); std::thread::sleep(Duration::from_millis(5)); }
+        };
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.set_nonblocking(true).unwrap();
+        let mut b = RosDriver::with_sim(&l.local_addr().unwrap().to_string());
+        let t = Instant::now();
+        let c = loop {
+            match l.accept() { Ok((c, _)) => break c, Err(_) => { assert!(t.elapsed() < limit, "the board never connected"); std::thread::sleep(Duration::from_millis(5)); } }
+        };
+        c.set_nonblocking(false).unwrap();
+        c.set_read_timeout(Some(limit)).unwrap();
+        (&c).write_all(b"{\"speed\":[0.5,-0.5],\"w\":[0,0,1]}\n").unwrap();
+        wait("the simulation's speeds", &|| b.drive.lock().unwrap().external);
+        assert_eq!(b.imu.get().angular_rate, [0.0, 0.0, 1.0]);
+        // one line per 10 ms of emulated time, stamped in ns, with the speeds the encoders now follow
+        for k in 0..3 { b.advance_to(k * CPU_HZ / 100 + 5); }
+        let mut r = BufReader::new(&c);
+        let lines: Vec<Json> = (0..3).map(|_| { let mut s = String::new(); r.read_line(&mut s).unwrap(); parse_json(s.trim_end()).unwrap() }).collect();
+        assert_eq!(lines.iter().map(|j| j.get("t").and_then(Json::as_i64).unwrap()).collect::<Vec<_>>(), [0, 10_000_000, 20_000_000]);
+        assert_eq!(super::super::rover_sim::numbers(&lines[2], "speed", 2), Some(vec![0.5, -0.5]));
+        // the simulation hangs up: the built-in motor model again, and the IMU at rest
+        drop(r);
+        drop(l);
+        drop(c);
+        wait("the disconnect", &|| !b.drive.lock().unwrap().external);
+        assert_eq!(b.imu.get().angular_rate, [0.0; 3]);
+    }
+
+    #[test]
     fn duty_in_the_dead_band_does_not_move() {
         let mut b = RosDriver::new();
         let edges = run(&mut b, 1 << 21, 65535 * 20 / 255, CPU_HZ / 10);

@@ -223,6 +223,11 @@ mod tests {
         assert_eq!(imu.get().angular_rate, [0.0, 0.0, 1.5]);
         assert_eq!(imu.get().linear_accel, [0.0; 3]);
         assert_eq!(imu.get().orientation, [0.0, 0.0, 0.0, 1.0]);
+        // the battery is clamped to what an INA219 bus can carry; the field sets the magnetometer
+        apply(r#"{"bat":[40,-60],"mag":[1,2,3]}"#, &drive, &imu, &bat);
+        let b = *bat.lock().unwrap();
+        assert_eq!((b.bus_v, b.current_a), (32.0, -50.0));
+        assert_eq!(imu.get().mag_field, [1.0, 2.0, 3.0]);
         // a key's name inside another key's string value does not hide the key itself
         apply(r#"{"src":"a","a" : [ 1, 2.5 ,-3 ]}"#, &drive, &imu, &bat);
         assert_eq!(imu.get().linear_accel, [1.0, 2.5, -3.0]);
